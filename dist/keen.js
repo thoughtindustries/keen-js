@@ -69,8 +69,8 @@
   }
 
   function _type(obj){
-	  var text = obj.constructor.toString();
-	  return text.match(/function (.*)\(/)[1];
+    var text = (obj && obj.constructor) ? obj.constructor.toString() : void 0;
+	  return (text) ? text.match(/function (.*)\(/)[1] : "Null";
   }
 
   function _each(o, cb, s){
@@ -97,6 +97,21 @@
       }
     }
     return 1;
+  }
+
+  function _parse_params(str){
+    // via http://stackoverflow.com/a/2880929/2511985
+    var urlParams = {},
+        match,
+        pl     = /\+/g,  // Regex for replacing addition symbol with a space
+        search = /([^&=]+)=?([^&]*)/g,
+        decode = function (s) { return decodeURIComponent(s.replace(pl, " ")); },
+        query  = str.split("?")[1];
+
+    while (!!(match=search.exec(query))) {
+      urlParams[decode(match[1])] = decode(match[2]);
+    }
+    return urlParams;
   }
 
   function _set_protocol(value) {
@@ -286,15 +301,22 @@
   // Expose utils
   Keen.utils = {
     each: _each,
-    extend: _extend
+    extend: _extend,
+    parseParams: _parse_params
   };
 
   Keen.ready = function(callback){
-    Keen.on('ready', callback);
+    if (Keen.loaded) {
+      callback();
+    } else {
+      Keen.on('ready', callback);
+    }
   };
 
   Keen.log = function(message) {
-    console.log('[Keen IO]', message)
+    if (typeof console == "object") {
+      console.log('[Keen IO]', message);
+    }
   };
 
   // -------------------------------
@@ -362,7 +384,6 @@
   };
 
   Keen.prototype.setGlobalProperties = function(newGlobalProperties) {
-    //console.log('setGlobalProperties', arguments);
     if (!this.client) return Keen.log('Check out our JavaScript SDK Usage Guide: https://keen.io/docs/clients/javascript/usage-guide/');
     if (newGlobalProperties && typeof(newGlobalProperties) == "function") {
       this.client.globalProperties = newGlobalProperties;
@@ -626,28 +647,10 @@
     }
   };
 
-  // Source: src/visualize.js
-  /*!
-  * ----------------------
-  * Keen IO Visualization
-  * ----------------------
-  */
-
-  Keen.prototype.draw = function(query, selector, config) {
-    return new Keen.Request(this, [query], function(){
-      this.draw(selector, config);
-    });
-  };
-
-  Keen.loaded = false;
-  // Set false to bypass trigger
-  // in src/outro.js
-
   // Source: src/lib/base64.js
-  /*! 
+  /*!
   * ----------------------------------------
   * Keen IO Base64 Transcoding
-  * https://gist.github.com/sgammon/5562296
   * ----------------------------------------
   */
 
@@ -972,3481 +975,7 @@
       };
     }
   }());
-  // Source: src/async.js
-  /*!
-  * ----------------------
-  * Keen IO Plugin
-  * Async Loader
-  * ----------------------
-  */
-
-  var loaded = window['Keen'],
-      cached = window['_' + 'Keen'] || {},
-      clients,
-      ready;
-
-  if (loaded && cached) {
-    clients = cached['clients'] || {},
-    ready = cached['ready'] || [];
-
-    for (var instance in clients) {
-      if (clients.hasOwnProperty(instance)) {
-        var client = clients[instance];
-
-        // Map methods to existing instances
-        for (var method in Keen.prototype) {
-          if (Keen.prototype.hasOwnProperty(method)) {
-            loaded.prototype[method] = Keen.prototype[method];
-          }
-        }
-
-        // Map additional methods as necessary
-        loaded.Query = (Keen.Query) ? Keen.Query : function(){};
-        loaded.Visualization = (Keen.Visualization) ? Keen.Visualization : function(){};
-
-        // Run Configuration
-        if (client._config) {
-          client.configure.call(client, client._config);
-          delete client._config;
-        }
-
-        // Add Global Properties
-        if (client._setGlobalProperties) {
-          var globals = client._setGlobalProperties;
-          for (var i = 0; i < globals.length; i++) {
-            client.setGlobalProperties.apply(client, globals[i]);
-          }
-          delete client._setGlobalProperties;
-        }
-
-        // Send Queued Events
-        if (client._addEvent) {
-          var queue = client._addEvent || [];
-          for (var i = 0; i < queue.length; i++) {
-            client.addEvent.apply(client, queue[i]);
-          }
-          delete client._addEvent;
-        }
-
-        // Create "on" Events
-        var callback = client._on || [];
-        if (client._on) {
-          for (var i = 0; i < callback.length; i++) {
-            client.on.apply(client, callback[i]);
-          }
-          client.trigger('ready');
-          delete client._on;
-        }
-
-      }
-    }
-
-    for (var i = 0; i < ready.length; i++) {
-      var callback = ready[i];
-      Keen.on('ready', function(){
-        callback();
-      });
-    };
-  }
-
-  // Source: src/_outro.js
-
-  // ----------------------
-  // Utility Methods
-  // ----------------------
-
-  setTimeout(function(){
-    if (Keen.loaded) {
-      Keen.trigger("ready");
-    }
-  }, 0);
-
-  return Keen;
-});
-
-  // Source: src/lib/chartstack.js
-/* jshint evil: true */
-(function(root) {
-  var previousChartstack = root.chartstack;
-  var chartstack = root.chartstack = {};
-  var adapters, charts, Chart, Events, transformers, isDomReady, readyCallbacks = [];
-
-  // Placeholder for chartstack data adapters.
-  chartstack.adapters = adapters = {};
-
-  // Array of instantiated charts.
-  chartstack.charts = charts = [];
-
-  // Placeholder for transform data adapters.
-  chartstack.transformers = transformers = {
-    json : function(data){
-      if (typeof data == 'string'){
-        return JSON.parse(data);
-      }else{
-        return data;
-      }
-    }
-  };
-
-  // Defaults accessible from outside in case user wants to change them.
-  // DOM properties override defaults.
-  chartstack.defaults = extend({
-    labels: true
-  }, chartstack.defaults || {});
-
-
-  // -----------------------------
-  // Events class
-  // -----------------------------
-  // Extended by all classes that
-  // require event listeners
-  // -----------------------------
-
-  Events = chartstack.Events = {
-
-    on: function(name, callback) {
-      this.listeners || (this.listeners = {});
-      var events = this.listeners[name] || (this.listeners[name] = []);
-      events.push({callback: callback});
-      return this;
-    },
-
-    // once: function(name, callback) {},
-
-    off: function(name, callback) {
-      if (!name && !callback) {
-        this.listeners = void 0;
-        delete this.listeners;
-        return this;
-      }
-      var events = this.listeners[name] || [];
-      for (var i = events.length; i--;) {
-        if (callback && callback == events[i].callback) {
-          this.listeners[name].splice(i, 1);
-        }
-        if (!callback || events.length === 0) {
-          this.listeners[name] = void 0;
-          delete this.listeners[name];
-        }
-      }
-      return this;
-    },
-
-    trigger: function(name) {
-      if (!this.listeners) {
-        return this;
-      }
-      var args = Array.prototype.slice.call(arguments, 1);
-      var events = this.listeners[name] || [];
-      for (var i = 0; i < events.length; i++) {
-        events[i].callback.apply(this, args);
-      }
-      return this;
-    }
-
-  };
-  extend(chartstack, Events);
-
-
-  // -----------------------------
-  // DataResource class
-  // -----------------------------
-  // This class is never directly
-  // instantiated, but is managed
-  // by the Dataset class
-  // -----------------------------
-
-  chartstack.DataResource = function(config){
-    // Types: String (Data or URL), Object
-    if (typeof config === "string") {
-      if (config.match(/^({|\[)/)) {
-        // Raw Data
-        this.response = JSON.parse(config);
-      } else {
-        // URL + Params
-        this.url = config;
-      }
-    } else {
-      extend(this, config);
-    }
-    this.adapter = this.adapter || 'default';
-    this.dataformat = this.dataformat || 'json';
-    this.dateformat = this.dateformat || false;
-    this.state = 'initialized';
-    this.configure();
-  };
-
-  chartstack.DataResource.prototype = {
-    configure: function(){
-      if (this.url !== void 0 && this.url.indexOf("?") !== -1 && this.params == void 0) {
-        this.params = chartstack.parseParams(this.url);
-        this.url = this.url.split("?")[0];
-      }
-      return this;
-    },
-    get: function(attribute){
-      return this.params[attribute] || null;
-    },
-    set: function(attributes){
-      for (var attribute in attributes) {
-        this.params[attribute] = attributes[attribute];
-      }
-      return this;
-    }
-  };
-  extend(chartstack.DataResource.prototype, Events);
-
-
-  // -----------------------------
-  // Dataset class
-  // -----------------------------
-  // This class instantiates and
-  // manages instances of the
-  // DataResource class
-  // -----------------------------
-
-  chartstack.Dataset = function(resource){
-    var resources = [];
-    if (resource instanceof Array) {
-      each(resource, function(instance){
-        resources.push(new chartstack.DataResource(instance));
-      });
-    } else {
-      resources.push(new chartstack.DataResource(resource));
-    }
-    this.resources = resources;
-    return;
-  };
-
-  chartstack.Dataset.prototype = {
-
-    fetch: function(){
-      var self = this, completions = 0, error, finish;
-
-      self.data = [];
-      self.responses = [];
-
-      error = function(){
-        //console.log('error');
-        return false;
-      };
-
-      finish = function(response, index){
-        self.resources[index].response = (is(response, 'string')) ? JSON.parse(response) : response;
-        self.resources[index].state = 'synced';
-        self.responses[index] = self.resources[index].response;
-        completions++;
-        if (completions == self.resources.length){
-          self.transform();
-        }
-      };
-
-      each(self.resources, function(resource, index){
-        if (resource.state == 'initialized' && resource.response !== void 0) {
-          return finish(resource.response, index);
-        } else if (resource.url) {
-          var url = resource.url + buildQueryString(resource.params);
-          var successSequencer = function(response){
-            finish(response, index);
-          };
-          chartstack.getAjax(url, successSequencer, error);
-          // getJSONP
-        }
-      });
-
-      return self;
-    },
-
-    transform: function() {
-      var self = this;
-      each(self.resources, function(resource, index){
-        var adapter = resource.adapter || 'default';
-        var response = self.responses[index];
-        if (adapter && chartstack.adapters[adapter]) {
-          self.data[index] = chartstack.adapters[adapter].call(resource, response);
-        } else {
-          self.data[index] = response.data;
-        }
-      });
-      self.trigger("complete", self.data[0]);
-      return self;
-    },
-
-    at: function(index){
-      //if (typeof index == "string") {
-      //  return this.resources where
-      //}
-      return this.resources[index] || null;
-    }
-
-  };
-  extend(chartstack.Dataset.prototype, Events);
-
-
-  // -----------------------------
-  // Visualization class
-  // -----------------------------
-  // This class is never directly
-  // instantiated, but extended
-  // by all library rendersets
-  // -----------------------------
-
-  chartstack.Visualization = function(config){
-    var self = this;
-    extend(self, config);
-
-    self.chartOptions = self.chartOptions || {};
-    self.height = self.height || chartstack.defaults.height;
-    self.width = self.width || chartstack.defaults.width || self.el.offsetWidth;
-
-    // Set default event handlers
-    self.on("error", function(){
-      visualErrorHandler.apply(this, arguments);
-    });
-    self.on("update", function(){
-      self.update.apply(this, arguments);
-    });
-
-
-    // Let's kick it off!
-    this.initialize();
-  };
-
-  chartstack.Visualization.prototype = {
-    initialize: function(){
-      // Sets listeners and prepares data
-    },
-    render: function(){
-      // Builds artifacts
-    },
-    update: function(){
-      // Optional: handles data updates
-    },
-    remove: function(){
-      // Cleanup and DOM removal
-    }
-  };
-  extend(chartstack.Visualization.prototype, Events);
-
-  chartstack.libraries = {};
-
-  chartstack.attributes = {
-    data: ['adapter', 'dataset', 'dataformat', 'dateformat'],
-    init: ['library'],
-    masterVis: ['title', 'labels', 'height', 'width', 'colors'],
-    customVis: []
-  };
-
-  chartstack.Visualization.register = function(name, methods, options){
-    chartstack.libraries[name] = chartstack.libraries[name] || {};
-    for (var method in methods) {
-      chartstack.libraries[name][method] = methods[method];
-    }
-    if (options !== void 0 && options.attributes !== void 0) {
-      each(options.attributes, function(attribute, index){
-        if (chartstack.attributes.customVis.indexOf(attribute) == -1) {
-          chartstack.attributes.customVis.push(options.attributes[index]);
-        }
-      });
-    }
-  };
-
-  chartstack.Visualization.extend = function(protoProps, staticProps){
-    var parent = this, Visualization;
-    if (protoProps && protoProps.hasOwnProperty('constructor')) {
-      Visualization = protoProps.constructor;
-    } else {
-      Visualization = function(){ return parent.apply(this, arguments); };
-    }
-    extend(Visualization, parent, staticProps);
-    var Surrogate = function(){ this.constructor = Visualization; };
-    Surrogate.prototype = parent.prototype;
-    Visualization.prototype = new Surrogate();
-    if (protoProps) {
-      extend(Visualization.prototype, protoProps);
-    }
-    Visualization.__super__ = parent.prototype;
-    return Visualization;
-  };
-
-  function visualErrorHandler(){
-    console.log("Error!", arguments);
-  }
-
-
-
-  // -----------------------------
-  // Chart class
-  // -----------------------------
-  // Primary class encompassing
-  // every chartstack instance
-  // -----------------------------
-
-  chartstack.Chart = Chart = function(args) {
-    var $chart = this,
-    setupVis = { chartOptions: {} },
-    setupData = {},
-    options = args || {};
-
-    // Add to internal array.
-    chartstack.charts.push($chart);
-
-    // Collects properties off DOM element and inspects data source.
-    function setup(){
-      var setupDom, setupJS, attrs = [];
-      //var initAttributes, dataAttributes, visualAttributes;
-
-      setupDom = function(){
-        //$chart.el = args;
-        setupVis.el = options;
-
-        // Type of chart.
-        options.chartType = setupVis.el.nodeName.toLocaleLowerCase();
-
-        // Our made up HTML nodes are display: inline so we need to make
-        // them block;
-        setupVis.el.style.display = "block";
-        /*setupVis.style = {
-          display: "inline-block"
-        };*/
-      };
-
-      setupJS = function(){
-        //setupVis['el'] = options.el;
-      };
-
-      // Copy global defaults on to this chart.
-      each(chartstack.defaults, function(k, v){
-        setupVis[v] = k;
-      });
-
-      if ('nodeType' in options){
-        setupDom();
-      } else {
-        setupJS();
-      }
-
-      // Find properties on dom element to override defaults.
-      // Support arrays here so we can store the data under a different name.
-      // TODO: These strings should be objects with support for defaults and other options.
-
-      // Prev:
-      // titleTextColor, legendColor, colors, pieSliceBorderColor,
-      // pieSliceTextColor, backgroundColor, customOptions, formatRowLabel
-
-      attrs = attrs.concat(chartstack.attributes.data);
-      attrs = attrs.concat(chartstack.attributes.init);
-      attrs = attrs.concat(chartstack.attributes.masterVis);
-      attrs = attrs.concat(chartstack.attributes.customVis);
-
-      each(attrs, function(attr){
-        var test, newKey;
-
-        if (is(attr, 'object')){
-          newKey = attr[1];
-          attr = attr[0];
-        }
-        test = options.nodeType ? options.getAttribute(attr) : options[attr];
-        // If property exists, save it.
-        if (test){
-          // Support for real booleans.
-          if (test == 'false' || test == '0' || test == 'off'){
-            test = false;
-          } else if (test == 'true' || test == '1' || test == "on"){
-            test = true;
-          }
-
-          if (newKey){
-            mapAttribute(newKey, test);
-          } else {
-            mapAttribute(attr, test);
-          }
-        }
-      });
-
-      function mapAttribute(key, val){
-        var value = (typeof val === "string" && val.match(/^({|\[)/)) ? JSON.parse(val.replace(/'/g, "\"")) : val;
-        if (chartstack.attributes.data.indexOf(key) !== -1) {
-          setupData[key] = value;
-        } else if (chartstack.attributes.init.indexOf(key) !== -1) {
-          options[key] = value;
-        } else if (chartstack.attributes.masterVis.indexOf(key) !== -1) {
-          setupVis[key] = value;
-        } else {
-          setupVis.chartOptions[key] = value;
-        }
-      }
-
-      // If we don't have a designated library...
-      if (!options.library){
-        if(options.chartType in chartstack.libraries[chartstack.library] || options.view instanceof chartstack.Visualization) {
-          // Set global default if type matches
-          options.library = chartstack.library;
-        } else {
-          // Select library with matching type
-          each(chartstack.libraries, function(library, namespace){
-            each(library, function(value, key){
-              if (options.chartType == key) {
-                options.library = namespace;
-              }
-            });
-          });
-        }
-      }
-
-      if (options.view instanceof chartstack.Visualization) {
-        $chart.view = options.view;
-      } else {
-        $chart.view = new chartstack.libraries[options.library][options.chartType](setupVis);
-      }
-
-
-      // Check datasource starts with { or [ assume it's JSON or else
-      // assume it's a URL to fetch.  We do not check for http anymore
-      // as it can be a local/relative file.
-
-      if (setupData.dataset instanceof chartstack.Dataset) {
-        $chart.dataset = setupData.dataset;
-      } else if (typeof setupData.dataset == 'string'){
-        $chart.dataset = new chartstack.Dataset(setupData.dataset.replace(/(\r\n|\n|\r|\ )/g,""));
-        $chart.dataset.resources[0].adapter = setupData.adapter || 'default';
-        $chart.dataset.resources[0].dataformat = setupData.dataformat || 'json';
-        $chart.dataset.resources[0].dateformat = setupData.dateformat || false;
-      } else {
-        $chart.dataset = new chartstack.Dataset({
-          response: setupData.dataset
-        });
-      }
-
-      $chart.dataset.on("complete", function(data){
-        //console.log('data', this.data);
-        $chart.view.data = this.data;
-        $chart.view.trigger("update", data);
-      });
-
-      if (options.autoFetch || options.autoFetch == void 0) {
-        $chart.dataset.fetch();
-      }
-
-    }
-
-    setup();
-
-    $chart.on("download", function(){
-      var c, svg = this.view.el.getElementsByTagName('svg');
-
-      if (svg.length){
-        svg = svg[0];
-        c = new chartstack.Simg(svg);
-        c.download();
-      }
-    });
-
-    $chart.on("freeze", function(cb){
-      var c, svg = this.view.el.getElementsByTagName('svg');
-      cb = cb || function(){};
-
-      if (svg.length){
-        svg = svg[0];
-        c = new chartstack.Simg(svg);
-        c.replace(cb);
-      }
-    });
-
-  };
-
-  Chart.prototype = {
-    show : function(){
-      this.trigger('show');
-      return this;
-    },
-
-    hide : function(){
-      this.trigger('hide');
-      return this;
-    },
-
-    draw: function(){
-      this.trigger('draw');
-      return this;
-    },
-
-    fetch : function(){
-      this.dataset.fetch();
-      //cb || (cb = function(){});
-      //fetch(cb);
-      return this;
-    }
-
-  };
-  extend(Chart.prototype, Events);
-
-
-
-  // -----------------------------
-  // Private Methods
-  // -----------------------------
-  // Expose for plugin use
-  // -----------------------------
-
-  extend(chartstack, {
-    is : is,
-    each : each,
-    extend : extend,
-    bootstrap : bootstrap,
-    loadScript : loadScript,
-    noConflict : noConflict,
-    ready: ready,
-    get: get,
-    addAdapter : addAdapter,
-    parseDOM : parseDOM,
-    parseParams: parseParams,
-    buildQueryString: buildQueryString,
-    getAjax : getAjax,
-    getJSONP: getJSONP,
-    registerLibrary: registerLibrary,
-    // Attach event for every chart we have.
-    on: function(){
-      var args = arguments;
-      each(this.charts, function(chart){
-        chart.on.apply(chart, args);
-      });
-    },
-    // Trigger event for every chart we have.
-    trigger: function(){
-      var args = arguments;
-      each(this.charts, function(chart){
-        chart.trigger.apply(chart, args);
-      });
-    }
-  });
-
-
-  // These three functions taken from:
-  // https://github.com/spocke/punymce
-  function is(o, t){
-    o = typeof(o);
-    if (!t){
-      return o != 'undefined';
-    }
-    return o == t;
-  }
-
-  function each(o, cb, s){
-    var n;
-    if (!o){
-      return 0;
-    }
-    s = !s ? o : s;
-    if (is(o.length)){
-      // Indexed arrays, needed for Safari
-      for (n=0; n<o.length; n++) {
-        if (cb.call(s, o[n], n, o) === false){
-          return 0;
-        }
-      }
-    } else {
-      // Hashtables
-      for (n in o){
-        if (o.hasOwnProperty(n)) {
-          if (cb.call(s, o[n], n, o) === false){
-            return 0;
-          }
-        }
-      }
-    }
-    return 1;
-  }
-
-  // Extend object e on to o.
-  function extend(o, e){
-    each(e, function(v, n){
-      o[n] = v;
-    });
-    return o;
-  }
-
-  function noConflict(){
-    root.chartstack = previousChartstack;
-    return this;
-  }
-
-  // DOM-ready queue method.
-  function ready(cb){
-    if (!isDomReady){
-      readyCallbacks.push(cb);
-    }else{
-      cb();
-    }
-  }
-
-/*
-  function preBootstrap(){
-    setTimeout(function(){
-      //console.log('chartstack.libraries', chartstack.libraries);
-    },0);
-    // TODO: Hard-coded support for Google Analytics for now.
-    // document.addEventListener("DOMContentLoaded", bootstrap);
-  }
-*/
-
-  // Called when DOM and chart libs are loaded and ready.
-  function bootstrap (){
-    // If graph library isn't set in defaults, match provider to the first graph
-    // lib found on the page that we have an adapter for.
-    if (chartstack.defaults.library){
-      chartstack.library = chartstack.defaults.library;
-    } else {
-      for (var namespace in chartstack.libraries) {
-        if (namespace in window) {
-          chartstack.library = namespace;
-          break;
-        }
-      }
-    }
-
-    if (!chartstack.library){
-      throw new Error('No charting library located.');
-    }
-
-    // Parse the dom.
-    chartstack.parseDOM();
-    isDomReady = true;
-
-    // Bring moment.js into the mix
-    chartstack.moment = root.moment || false;
-    if (chartstack.moment) {
-      chartstack.moment.suppressDeprecationWarnings = true;
-    }
-
-    each(readyCallbacks, function(cb){
-      cb();
-    });
-  }
-
-  // Returns a chartstack object by html element id or element comparison.
-  function get(strOrEl){
-    var el = strOrEl.nodeName ? strOrEl : document.querySelector(strOrEl);
-    var matchedChart;
-
-    if (el){
-      each(chartstack.charts, function(chart){
-        if (el == chart.view.el){
-          matchedChart = chart;
-          return false;
-        }
-      });
-      return matchedChart;
-    }
-    throw("That element doesn't exist on the page.");
-  }
-
-  // Adapters that normalize 3rd party api to a standard format.
-  function addAdapter(domain, configObj){
-    if (chartstack.is(configObj, 'function')){
-      //adapters.push({ name: domain, adapte: configObj }); // [domain] = configObj;
-      adapters[domain] = configObj;
-    }else{
-      each(configObj, function(func, type){
-        // If domain doesn't exist, create the namespace.
-        if (!adapters[domain]){
-          adapters[domain] = {};
-        }
-        adapters[domain][type] = func;
-
-      });
-    }
-  }
-
-  // Register library to viz and data components.
-  function registerLibrary(obj){
-    // Create new chart namespace.
-    var namespace = chartstack[obj.name] = {};
-    var vizCharts = {};
-
-    // For each chart type add it to the namespace.
-    each(obj.charts, function(chart){
-      var chartLow = chart.type.toLowerCase();
-      var obj = extend(chart.events,{
-        type: chartLow
-      });
-      // Instantiate new visualization object per chart.
-      namespace[chart.type] = chartstack.Visualization.extend(obj);
-      // Queue chart types to create new Visualization.
-      vizCharts[chartLow] = namespace[chart.type];
-    });
-
-    // Register Visualization.
-    chartstack.Visualization.register(obj.namespace, vizCharts, {
-      attributes: obj.attributes
-    });
-
-    // If loadLib method exists it is called to load the graphic library.
-    // Must execute passed callback when the library is loaded.
-    // If loadLib does not exist, we assume the user loaded the library before
-    // chartstack.js already (most cases).
-    if ('loadLib' in obj){
-      namespace.loaded = false;
-      obj.loadLib(function(){
-        namespace.loaded = true;
-        chartstack.bootstrap();
-      });
-
-    }else{
-      namespace.loaded = true;
-    }
-  }
-
-  function loadScript(url, cb) {
-    var doc = document;
-    var handler;
-    var head = doc.head || doc.getElementsByTagName("head");
-
-    // loading code borrowed directly from LABjs itself
-    setTimeout(function () {
-      // check if ref is still a live node list
-      if ('item' in head) {
-        // append_to node not yet ready
-        if (!head[0]) {
-          setTimeout(arguments.callee, 25);
-          return;
-        }
-        // reassign from live node list ref to pure node ref -- avoids nasty IE bug where changes to DOM invalidate live node lists
-        head = head[0];
-      }
-      var script = doc.createElement("script"),
-      scriptdone = false;
-      script.onload = script.onreadystatechange = function () {
-        if ((script.readyState && script.readyState !== "complete" && script.readyState !== "loaded") || scriptdone) {
-          return false;
-        }
-        script.onload = script.onreadystatechange = null;
-        scriptdone = true;
-        cb();
-      };
-      script.src = url;
-      head.insertBefore(script, head.firstChild);
-    }, 0);
-
-    // required: shim for FF <= 3.5 not having document.readyState
-    if (doc.readyState === null && doc.addEventListener) {
-      doc.readyState = "loading";
-      doc.addEventListener("DOMContentLoaded", handler = function () {
-        doc.removeEventListener("DOMContentLoaded", handler, false);
-        doc.readyState = "complete";
-      }, false);
-    }
-  }
-
-  // Parse the DOM and search for valid charting elements to turn to classes.
-  function parseDOM(){
-    var registeredNodes = [], retrievedNodes;
-    each(chartstack.libraries, function(library){
-      for (var key in library){
-        if (registeredNodes.indexOf(key) == -1) {
-          registeredNodes.push(key);
-        }
-      }
-    });
-    retrievedNodes = document.querySelectorAll(registeredNodes.join(','));
-    each(retrievedNodes, function(el){
-      // Ensure data attribute exists.
-      if (el.getAttribute('dataset')){
-        new Chart(el);
-      }
-    });
-  }
-
-  function parseParams(str){
-    // via http://stackoverflow.com/a/2880929/2511985
-    var urlParams = {},
-        match,
-        pl     = /\+/g,  // Regex for replacing addition symbol with a space
-        search = /([^&=]+)=?([^&]*)/g,
-        decode = function (s) { return decodeURIComponent(s.replace(pl, " ")); },
-        query  = str.split("?")[1];
-
-    while (!!(match=search.exec(query))) {
-      urlParams[decode(match[1])] = decode(match[2]);
-    }
-    return urlParams;
-  }
-
-  function buildQueryString(params){
-    var query = [];
-    for (var key in params) {
-      if (params[key]) {
-        var value = params[key];
-        if (Object.prototype.toString.call(value) !== '[object String]') {
-          value = JSON.stringify(value);
-        }
-        value = encodeURIComponent(value);
-        query.push(key + '=' + value);
-      }
-    }
-    return "?" + query.join('&');
-  }
-
-  function getAjax(url, cb){
-    var xhr;
-    var createXHR = function(){
-      var xhr;
-      if (window.ActiveXObject){
-        try{
-          xhr = new ActiveXObject("Microsoft.XMLHTTP");
-        }catch(e){
-          console.warn(e.message);
-          xhr = null;
-        }
-      }else{
-        xhr = new XMLHttpRequest();
-      }
-      return xhr;
-    };
-
-    xhr = createXHR();
-    xhr.onreadystatechange = function(){
-      if (xhr.readyState === 4){
-        cb(xhr.responseText);
-      }
-    };
-    xhr.open('GET', url, true);
-    xhr.setRequestHeader('Content-type', 'application/x-www-form-urlencoded');
-    xhr.send();
-  }
-
-  function getJSONP(url, success, error){
-    var callbackName = "ChartstackJSONPCallback" + new Date().getTime();
-    while (callbackName in window) {
-      callbackName += "a";
-    }
-    var loaded = false;
-    window[callbackName] = function (response) {
-      loaded = true;
-      if (success && response) {
-        success(response);
-      }
-      // Remove this from the namespace
-      window[callbackName] = undefined;
-    };
-    url = url + "&jsonp=" + callbackName;
-    var script = document.createElement("script");
-    script.id = "chartstack-jsonp";
-    script.src = url;
-    document.getElementsByTagName("head")[0].appendChild(script);
-    // for early IE w/ no onerror event
-    script.onreadystatechange = function() {
-      if (loaded === false && this.readyState === "loaded") {
-        loaded = true;
-        if (error) {
-          error();
-        }
-      }
-    };
-    // non-ie, etc
-    script.onerror = function() {
-      if (loaded === false) { // on IE9 both onerror and onreadystatechange are called
-        loaded = true;
-        if (error) {
-          error();
-        }
-      }
-    };
-  }
-
-  // preBootstrap();
-})(this);
-
-//! moment.js
-//! version : 2.6.0
-//! authors : Tim Wood, Iskren Chernev, Moment.js contributors
-//! license : MIT
-//! momentjs.com
-
-(function (undefined) {
-
-    /************************************
-        Constants
-    ************************************/
-
-    var moment,
-        VERSION = "2.6.0",
-        // the global-scope this is NOT the global object in Node.js
-        globalScope = typeof global !== 'undefined' ? global : this,
-        oldGlobalMoment,
-        round = Math.round,
-        i,
-
-        YEAR = 0,
-        MONTH = 1,
-        DATE = 2,
-        HOUR = 3,
-        MINUTE = 4,
-        SECOND = 5,
-        MILLISECOND = 6,
-
-        // internal storage for language config files
-        languages = {},
-
-        // moment internal properties
-        momentProperties = {
-            _isAMomentObject: null,
-            _i : null,
-            _f : null,
-            _l : null,
-            _strict : null,
-            _isUTC : null,
-            _offset : null,  // optional. Combine with _isUTC
-            _pf : null,
-            _lang : null  // optional
-        },
-
-        // check for nodeJS
-        hasModule = (typeof module !== 'undefined' && module.exports),
-
-        // ASP.NET json date format regex
-        aspNetJsonRegex = /^\/?Date\((\-?\d+)/i,
-        aspNetTimeSpanJsonRegex = /(\-)?(?:(\d*)\.)?(\d+)\:(\d+)(?:\:(\d+)\.?(\d{3})?)?/,
-
-        // from http://docs.closure-library.googlecode.com/git/closure_goog_date_date.js.source.html
-        // somewhat more in line with 4.4.3.2 2004 spec, but allows decimal anywhere
-        isoDurationRegex = /^(-)?P(?:(?:([0-9,.]*)Y)?(?:([0-9,.]*)M)?(?:([0-9,.]*)D)?(?:T(?:([0-9,.]*)H)?(?:([0-9,.]*)M)?(?:([0-9,.]*)S)?)?|([0-9,.]*)W)$/,
-
-        // format tokens
-        formattingTokens = /(\[[^\[]*\])|(\\)?(Mo|MM?M?M?|Do|DDDo|DD?D?D?|ddd?d?|do?|w[o|w]?|W[o|W]?|Q|YYYYYY|YYYYY|YYYY|YY|gg(ggg?)?|GG(GGG?)?|e|E|a|A|hh?|HH?|mm?|ss?|S{1,4}|X|zz?|ZZ?|.)/g,
-        localFormattingTokens = /(\[[^\[]*\])|(\\)?(LT|LL?L?L?|l{1,4})/g,
-
-        // parsing token regexes
-        parseTokenOneOrTwoDigits = /\d\d?/, // 0 - 99
-        parseTokenOneToThreeDigits = /\d{1,3}/, // 0 - 999
-        parseTokenOneToFourDigits = /\d{1,4}/, // 0 - 9999
-        parseTokenOneToSixDigits = /[+\-]?\d{1,6}/, // -999,999 - 999,999
-        parseTokenDigits = /\d+/, // nonzero number of digits
-        parseTokenWord = /[0-9]*['a-z\u00A0-\u05FF\u0700-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF]+|[\u0600-\u06FF\/]+(\s*?[\u0600-\u06FF]+){1,2}/i, // any word (or two) characters or numbers including two/three word month in arabic.
-        parseTokenTimezone = /Z|[\+\-]\d\d:?\d\d/gi, // +00:00 -00:00 +0000 -0000 or Z
-        parseTokenT = /T/i, // T (ISO separator)
-        parseTokenTimestampMs = /[\+\-]?\d+(\.\d{1,3})?/, // 123456789 123456789.123
-        parseTokenOrdinal = /\d{1,2}/,
-
-        //strict parsing regexes
-        parseTokenOneDigit = /\d/, // 0 - 9
-        parseTokenTwoDigits = /\d\d/, // 00 - 99
-        parseTokenThreeDigits = /\d{3}/, // 000 - 999
-        parseTokenFourDigits = /\d{4}/, // 0000 - 9999
-        parseTokenSixDigits = /[+-]?\d{6}/, // -999,999 - 999,999
-        parseTokenSignedNumber = /[+-]?\d+/, // -inf - inf
-
-        // iso 8601 regex
-        // 0000-00-00 0000-W00 or 0000-W00-0 + T + 00 or 00:00 or 00:00:00 or 00:00:00.000 + +00:00 or +0000 or +00)
-        isoRegex = /^\s*(?:[+-]\d{6}|\d{4})-(?:(\d\d-\d\d)|(W\d\d$)|(W\d\d-\d)|(\d\d\d))((T| )(\d\d(:\d\d(:\d\d(\.\d+)?)?)?)?([\+\-]\d\d(?::?\d\d)?|\s*Z)?)?$/,
-
-        isoFormat = 'YYYY-MM-DDTHH:mm:ssZ',
-
-        isoDates = [
-            ['YYYYYY-MM-DD', /[+-]\d{6}-\d{2}-\d{2}/],
-            ['YYYY-MM-DD', /\d{4}-\d{2}-\d{2}/],
-            ['GGGG-[W]WW-E', /\d{4}-W\d{2}-\d/],
-            ['GGGG-[W]WW', /\d{4}-W\d{2}/],
-            ['YYYY-DDD', /\d{4}-\d{3}/]
-        ],
-
-        // iso time formats and regexes
-        isoTimes = [
-            ['HH:mm:ss.SSSS', /(T| )\d\d:\d\d:\d\d\.\d+/],
-            ['HH:mm:ss', /(T| )\d\d:\d\d:\d\d/],
-            ['HH:mm', /(T| )\d\d:\d\d/],
-            ['HH', /(T| )\d\d/]
-        ],
-
-        // timezone chunker "+10:00" > ["10", "00"] or "-1530" > ["-15", "30"]
-        parseTimezoneChunker = /([\+\-]|\d\d)/gi,
-
-        // getter and setter names
-        proxyGettersAndSetters = 'Date|Hours|Minutes|Seconds|Milliseconds'.split('|'),
-        unitMillisecondFactors = {
-            'Milliseconds' : 1,
-            'Seconds' : 1e3,
-            'Minutes' : 6e4,
-            'Hours' : 36e5,
-            'Days' : 864e5,
-            'Months' : 2592e6,
-            'Years' : 31536e6
-        },
-
-        unitAliases = {
-            ms : 'millisecond',
-            s : 'second',
-            m : 'minute',
-            h : 'hour',
-            d : 'day',
-            D : 'date',
-            w : 'week',
-            W : 'isoWeek',
-            M : 'month',
-            Q : 'quarter',
-            y : 'year',
-            DDD : 'dayOfYear',
-            e : 'weekday',
-            E : 'isoWeekday',
-            gg: 'weekYear',
-            GG: 'isoWeekYear'
-        },
-
-        camelFunctions = {
-            dayofyear : 'dayOfYear',
-            isoweekday : 'isoWeekday',
-            isoweek : 'isoWeek',
-            weekyear : 'weekYear',
-            isoweekyear : 'isoWeekYear'
-        },
-
-        // format function strings
-        formatFunctions = {},
-
-        // tokens to ordinalize and pad
-        ordinalizeTokens = 'DDD w W M D d'.split(' '),
-        paddedTokens = 'M D H h m s w W'.split(' '),
-
-        formatTokenFunctions = {
-            M    : function () {
-                return this.month() + 1;
-            },
-            MMM  : function (format) {
-                return this.lang().monthsShort(this, format);
-            },
-            MMMM : function (format) {
-                return this.lang().months(this, format);
-            },
-            D    : function () {
-                return this.date();
-            },
-            DDD  : function () {
-                return this.dayOfYear();
-            },
-            d    : function () {
-                return this.day();
-            },
-            dd   : function (format) {
-                return this.lang().weekdaysMin(this, format);
-            },
-            ddd  : function (format) {
-                return this.lang().weekdaysShort(this, format);
-            },
-            dddd : function (format) {
-                return this.lang().weekdays(this, format);
-            },
-            w    : function () {
-                return this.week();
-            },
-            W    : function () {
-                return this.isoWeek();
-            },
-            YY   : function () {
-                return leftZeroFill(this.year() % 100, 2);
-            },
-            YYYY : function () {
-                return leftZeroFill(this.year(), 4);
-            },
-            YYYYY : function () {
-                return leftZeroFill(this.year(), 5);
-            },
-            YYYYYY : function () {
-                var y = this.year(), sign = y >= 0 ? '+' : '-';
-                return sign + leftZeroFill(Math.abs(y), 6);
-            },
-            gg   : function () {
-                return leftZeroFill(this.weekYear() % 100, 2);
-            },
-            gggg : function () {
-                return leftZeroFill(this.weekYear(), 4);
-            },
-            ggggg : function () {
-                return leftZeroFill(this.weekYear(), 5);
-            },
-            GG   : function () {
-                return leftZeroFill(this.isoWeekYear() % 100, 2);
-            },
-            GGGG : function () {
-                return leftZeroFill(this.isoWeekYear(), 4);
-            },
-            GGGGG : function () {
-                return leftZeroFill(this.isoWeekYear(), 5);
-            },
-            e : function () {
-                return this.weekday();
-            },
-            E : function () {
-                return this.isoWeekday();
-            },
-            a    : function () {
-                return this.lang().meridiem(this.hours(), this.minutes(), true);
-            },
-            A    : function () {
-                return this.lang().meridiem(this.hours(), this.minutes(), false);
-            },
-            H    : function () {
-                return this.hours();
-            },
-            h    : function () {
-                return this.hours() % 12 || 12;
-            },
-            m    : function () {
-                return this.minutes();
-            },
-            s    : function () {
-                return this.seconds();
-            },
-            S    : function () {
-                return toInt(this.milliseconds() / 100);
-            },
-            SS   : function () {
-                return leftZeroFill(toInt(this.milliseconds() / 10), 2);
-            },
-            SSS  : function () {
-                return leftZeroFill(this.milliseconds(), 3);
-            },
-            SSSS : function () {
-                return leftZeroFill(this.milliseconds(), 3);
-            },
-            Z    : function () {
-                var a = -this.zone(),
-                    b = "+";
-                if (a < 0) {
-                    a = -a;
-                    b = "-";
-                }
-                return b + leftZeroFill(toInt(a / 60), 2) + ":" + leftZeroFill(toInt(a) % 60, 2);
-            },
-            ZZ   : function () {
-                var a = -this.zone(),
-                    b = "+";
-                if (a < 0) {
-                    a = -a;
-                    b = "-";
-                }
-                return b + leftZeroFill(toInt(a / 60), 2) + leftZeroFill(toInt(a) % 60, 2);
-            },
-            z : function () {
-                return this.zoneAbbr();
-            },
-            zz : function () {
-                return this.zoneName();
-            },
-            X    : function () {
-                return this.unix();
-            },
-            Q : function () {
-                return this.quarter();
-            }
-        },
-
-        lists = ['months', 'monthsShort', 'weekdays', 'weekdaysShort', 'weekdaysMin'];
-
-    function defaultParsingFlags() {
-        // We need to deep clone this object, and es5 standard is not very
-        // helpful.
-        return {
-            empty : false,
-            unusedTokens : [],
-            unusedInput : [],
-            overflow : -2,
-            charsLeftOver : 0,
-            nullInput : false,
-            invalidMonth : null,
-            invalidFormat : false,
-            userInvalidated : false,
-            iso: false
-        };
-    }
-
-    function deprecate(msg, fn) {
-        var firstTime = true;
-        function printMsg() {
-            if (moment.suppressDeprecationWarnings === false &&
-                    typeof console !== 'undefined' && console.warn) {
-                console.warn("Deprecation warning: " + msg);
-            }
-        }
-        return extend(function () {
-            if (firstTime) {
-                printMsg();
-                firstTime = false;
-            }
-            return fn.apply(this, arguments);
-        }, fn);
-    }
-
-    function padToken(func, count) {
-        return function (a) {
-            return leftZeroFill(func.call(this, a), count);
-        };
-    }
-    function ordinalizeToken(func, period) {
-        return function (a) {
-            return this.lang().ordinal(func.call(this, a), period);
-        };
-    }
-
-    while (ordinalizeTokens.length) {
-        i = ordinalizeTokens.pop();
-        formatTokenFunctions[i + 'o'] = ordinalizeToken(formatTokenFunctions[i], i);
-    }
-    while (paddedTokens.length) {
-        i = paddedTokens.pop();
-        formatTokenFunctions[i + i] = padToken(formatTokenFunctions[i], 2);
-    }
-    formatTokenFunctions.DDDD = padToken(formatTokenFunctions.DDD, 3);
-
-
-    /************************************
-        Constructors
-    ************************************/
-
-    function Language() {
-
-    }
-
-    // Moment prototype object
-    function Moment(config) {
-        checkOverflow(config);
-        extend(this, config);
-    }
-
-    // Duration Constructor
-    function Duration(duration) {
-        var normalizedInput = normalizeObjectUnits(duration),
-            years = normalizedInput.year || 0,
-            quarters = normalizedInput.quarter || 0,
-            months = normalizedInput.month || 0,
-            weeks = normalizedInput.week || 0,
-            days = normalizedInput.day || 0,
-            hours = normalizedInput.hour || 0,
-            minutes = normalizedInput.minute || 0,
-            seconds = normalizedInput.second || 0,
-            milliseconds = normalizedInput.millisecond || 0;
-
-        // representation for dateAddRemove
-        this._milliseconds = +milliseconds +
-            seconds * 1e3 + // 1000
-            minutes * 6e4 + // 1000 * 60
-            hours * 36e5; // 1000 * 60 * 60
-        // Because of dateAddRemove treats 24 hours as different from a
-        // day when working around DST, we need to store them separately
-        this._days = +days +
-            weeks * 7;
-        // It is impossible translate months into days without knowing
-        // which months you are are talking about, so we have to store
-        // it separately.
-        this._months = +months +
-            quarters * 3 +
-            years * 12;
-
-        this._data = {};
-
-        this._bubble();
-    }
-
-    /************************************
-        Helpers
-    ************************************/
-
-
-    function extend(a, b) {
-        for (var i in b) {
-            if (b.hasOwnProperty(i)) {
-                a[i] = b[i];
-            }
-        }
-
-        if (b.hasOwnProperty("toString")) {
-            a.toString = b.toString;
-        }
-
-        if (b.hasOwnProperty("valueOf")) {
-            a.valueOf = b.valueOf;
-        }
-
-        return a;
-    }
-
-    function cloneMoment(m) {
-        var result = {}, i;
-        for (i in m) {
-            if (m.hasOwnProperty(i) && momentProperties.hasOwnProperty(i)) {
-                result[i] = m[i];
-            }
-        }
-
-        return result;
-    }
-
-    function absRound(number) {
-        if (number < 0) {
-            return Math.ceil(number);
-        } else {
-            return Math.floor(number);
-        }
-    }
-
-    // left zero fill a number
-    // see http://jsperf.com/left-zero-filling for performance comparison
-    function leftZeroFill(number, targetLength, forceSign) {
-        var output = '' + Math.abs(number),
-            sign = number >= 0;
-
-        while (output.length < targetLength) {
-            output = '0' + output;
-        }
-        return (sign ? (forceSign ? '+' : '') : '-') + output;
-    }
-
-    // helper function for _.addTime and _.subtractTime
-    function addOrSubtractDurationFromMoment(mom, duration, isAdding, updateOffset) {
-        var milliseconds = duration._milliseconds,
-            days = duration._days,
-            months = duration._months;
-        updateOffset = updateOffset == null ? true : updateOffset;
-
-        if (milliseconds) {
-            mom._d.setTime(+mom._d + milliseconds * isAdding);
-        }
-        if (days) {
-            rawSetter(mom, 'Date', rawGetter(mom, 'Date') + days * isAdding);
-        }
-        if (months) {
-            rawMonthSetter(mom, rawGetter(mom, 'Month') + months * isAdding);
-        }
-        if (updateOffset) {
-            moment.updateOffset(mom, days || months);
-        }
-    }
-
-    // check if is an array
-    function isArray(input) {
-        return Object.prototype.toString.call(input) === '[object Array]';
-    }
-
-    function isDate(input) {
-        return  Object.prototype.toString.call(input) === '[object Date]' ||
-                input instanceof Date;
-    }
-
-    // compare two arrays, return the number of differences
-    function compareArrays(array1, array2, dontConvert) {
-        var len = Math.min(array1.length, array2.length),
-            lengthDiff = Math.abs(array1.length - array2.length),
-            diffs = 0,
-            i;
-        for (i = 0; i < len; i++) {
-            if ((dontConvert && array1[i] !== array2[i]) ||
-                (!dontConvert && toInt(array1[i]) !== toInt(array2[i]))) {
-                diffs++;
-            }
-        }
-        return diffs + lengthDiff;
-    }
-
-    function normalizeUnits(units) {
-        if (units) {
-            var lowered = units.toLowerCase().replace(/(.)s$/, '$1');
-            units = unitAliases[units] || camelFunctions[lowered] || lowered;
-        }
-        return units;
-    }
-
-    function normalizeObjectUnits(inputObject) {
-        var normalizedInput = {},
-            normalizedProp,
-            prop;
-
-        for (prop in inputObject) {
-            if (inputObject.hasOwnProperty(prop)) {
-                normalizedProp = normalizeUnits(prop);
-                if (normalizedProp) {
-                    normalizedInput[normalizedProp] = inputObject[prop];
-                }
-            }
-        }
-
-        return normalizedInput;
-    }
-
-    function makeList(field) {
-        var count, setter;
-
-        if (field.indexOf('week') === 0) {
-            count = 7;
-            setter = 'day';
-        }
-        else if (field.indexOf('month') === 0) {
-            count = 12;
-            setter = 'month';
-        }
-        else {
-            return;
-        }
-
-        moment[field] = function (format, index) {
-            var i, getter,
-                method = moment.fn._lang[field],
-                results = [];
-
-            if (typeof format === 'number') {
-                index = format;
-                format = undefined;
-            }
-
-            getter = function (i) {
-                var m = moment().utc().set(setter, i);
-                return method.call(moment.fn._lang, m, format || '');
-            };
-
-            if (index != null) {
-                return getter(index);
-            }
-            else {
-                for (i = 0; i < count; i++) {
-                    results.push(getter(i));
-                }
-                return results;
-            }
-        };
-    }
-
-    function toInt(argumentForCoercion) {
-        var coercedNumber = +argumentForCoercion,
-            value = 0;
-
-        if (coercedNumber !== 0 && isFinite(coercedNumber)) {
-            if (coercedNumber >= 0) {
-                value = Math.floor(coercedNumber);
-            } else {
-                value = Math.ceil(coercedNumber);
-            }
-        }
-
-        return value;
-    }
-
-    function daysInMonth(year, month) {
-        return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-    }
-
-    function weeksInYear(year, dow, doy) {
-        return weekOfYear(moment([year, 11, 31 + dow - doy]), dow, doy).week;
-    }
-
-    function daysInYear(year) {
-        return isLeapYear(year) ? 366 : 365;
-    }
-
-    function isLeapYear(year) {
-        return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-    }
-
-    function checkOverflow(m) {
-        var overflow;
-        if (m._a && m._pf.overflow === -2) {
-            overflow =
-                m._a[MONTH] < 0 || m._a[MONTH] > 11 ? MONTH :
-                m._a[DATE] < 1 || m._a[DATE] > daysInMonth(m._a[YEAR], m._a[MONTH]) ? DATE :
-                m._a[HOUR] < 0 || m._a[HOUR] > 23 ? HOUR :
-                m._a[MINUTE] < 0 || m._a[MINUTE] > 59 ? MINUTE :
-                m._a[SECOND] < 0 || m._a[SECOND] > 59 ? SECOND :
-                m._a[MILLISECOND] < 0 || m._a[MILLISECOND] > 999 ? MILLISECOND :
-                -1;
-
-            if (m._pf._overflowDayOfYear && (overflow < YEAR || overflow > DATE)) {
-                overflow = DATE;
-            }
-
-            m._pf.overflow = overflow;
-        }
-    }
-
-    function isValid(m) {
-        if (m._isValid == null) {
-            m._isValid = !isNaN(m._d.getTime()) &&
-                m._pf.overflow < 0 &&
-                !m._pf.empty &&
-                !m._pf.invalidMonth &&
-                !m._pf.nullInput &&
-                !m._pf.invalidFormat &&
-                !m._pf.userInvalidated;
-
-            if (m._strict) {
-                m._isValid = m._isValid &&
-                    m._pf.charsLeftOver === 0 &&
-                    m._pf.unusedTokens.length === 0;
-            }
-        }
-        return m._isValid;
-    }
-
-    function normalizeLanguage(key) {
-        return key ? key.toLowerCase().replace('_', '-') : key;
-    }
-
-    // Return a moment from input, that is local/utc/zone equivalent to model.
-    function makeAs(input, model) {
-        return model._isUTC ? moment(input).zone(model._offset || 0) :
-            moment(input).local();
-    }
-
-    /************************************
-        Languages
-    ************************************/
-
-
-    extend(Language.prototype, {
-
-        set : function (config) {
-            var prop, i;
-            for (i in config) {
-                prop = config[i];
-                if (typeof prop === 'function') {
-                    this[i] = prop;
-                } else {
-                    this['_' + i] = prop;
-                }
-            }
-        },
-
-        _months : "January_February_March_April_May_June_July_August_September_October_November_December".split("_"),
-        months : function (m) {
-            return this._months[m.month()];
-        },
-
-        _monthsShort : "Jan_Feb_Mar_Apr_May_Jun_Jul_Aug_Sep_Oct_Nov_Dec".split("_"),
-        monthsShort : function (m) {
-            return this._monthsShort[m.month()];
-        },
-
-        monthsParse : function (monthName) {
-            var i, mom, regex;
-
-            if (!this._monthsParse) {
-                this._monthsParse = [];
-            }
-
-            for (i = 0; i < 12; i++) {
-                // make the regex if we don't have it already
-                if (!this._monthsParse[i]) {
-                    mom = moment.utc([2000, i]);
-                    regex = '^' + this.months(mom, '') + '|^' + this.monthsShort(mom, '');
-                    this._monthsParse[i] = new RegExp(regex.replace('.', ''), 'i');
-                }
-                // test the regex
-                if (this._monthsParse[i].test(monthName)) {
-                    return i;
-                }
-            }
-        },
-
-        _weekdays : "Sunday_Monday_Tuesday_Wednesday_Thursday_Friday_Saturday".split("_"),
-        weekdays : function (m) {
-            return this._weekdays[m.day()];
-        },
-
-        _weekdaysShort : "Sun_Mon_Tue_Wed_Thu_Fri_Sat".split("_"),
-        weekdaysShort : function (m) {
-            return this._weekdaysShort[m.day()];
-        },
-
-        _weekdaysMin : "Su_Mo_Tu_We_Th_Fr_Sa".split("_"),
-        weekdaysMin : function (m) {
-            return this._weekdaysMin[m.day()];
-        },
-
-        weekdaysParse : function (weekdayName) {
-            var i, mom, regex;
-
-            if (!this._weekdaysParse) {
-                this._weekdaysParse = [];
-            }
-
-            for (i = 0; i < 7; i++) {
-                // make the regex if we don't have it already
-                if (!this._weekdaysParse[i]) {
-                    mom = moment([2000, 1]).day(i);
-                    regex = '^' + this.weekdays(mom, '') + '|^' + this.weekdaysShort(mom, '') + '|^' + this.weekdaysMin(mom, '');
-                    this._weekdaysParse[i] = new RegExp(regex.replace('.', ''), 'i');
-                }
-                // test the regex
-                if (this._weekdaysParse[i].test(weekdayName)) {
-                    return i;
-                }
-            }
-        },
-
-        _longDateFormat : {
-            LT : "h:mm A",
-            L : "MM/DD/YYYY",
-            LL : "MMMM D YYYY",
-            LLL : "MMMM D YYYY LT",
-            LLLL : "dddd, MMMM D YYYY LT"
-        },
-        longDateFormat : function (key) {
-            var output = this._longDateFormat[key];
-            if (!output && this._longDateFormat[key.toUpperCase()]) {
-                output = this._longDateFormat[key.toUpperCase()].replace(/MMMM|MM|DD|dddd/g, function (val) {
-                    return val.slice(1);
-                });
-                this._longDateFormat[key] = output;
-            }
-            return output;
-        },
-
-        isPM : function (input) {
-            // IE8 Quirks Mode & IE7 Standards Mode do not allow accessing strings like arrays
-            // Using charAt should be more compatible.
-            return ((input + '').toLowerCase().charAt(0) === 'p');
-        },
-
-        _meridiemParse : /[ap]\.?m?\.?/i,
-        meridiem : function (hours, minutes, isLower) {
-            if (hours > 11) {
-                return isLower ? 'pm' : 'PM';
-            } else {
-                return isLower ? 'am' : 'AM';
-            }
-        },
-
-        _calendar : {
-            sameDay : '[Today at] LT',
-            nextDay : '[Tomorrow at] LT',
-            nextWeek : 'dddd [at] LT',
-            lastDay : '[Yesterday at] LT',
-            lastWeek : '[Last] dddd [at] LT',
-            sameElse : 'L'
-        },
-        calendar : function (key, mom) {
-            var output = this._calendar[key];
-            return typeof output === 'function' ? output.apply(mom) : output;
-        },
-
-        _relativeTime : {
-            future : "in %s",
-            past : "%s ago",
-            s : "a few seconds",
-            m : "a minute",
-            mm : "%d minutes",
-            h : "an hour",
-            hh : "%d hours",
-            d : "a day",
-            dd : "%d days",
-            M : "a month",
-            MM : "%d months",
-            y : "a year",
-            yy : "%d years"
-        },
-        relativeTime : function (number, withoutSuffix, string, isFuture) {
-            var output = this._relativeTime[string];
-            return (typeof output === 'function') ?
-                output(number, withoutSuffix, string, isFuture) :
-                output.replace(/%d/i, number);
-        },
-        pastFuture : function (diff, output) {
-            var format = this._relativeTime[diff > 0 ? 'future' : 'past'];
-            return typeof format === 'function' ? format(output) : format.replace(/%s/i, output);
-        },
-
-        ordinal : function (number) {
-            return this._ordinal.replace("%d", number);
-        },
-        _ordinal : "%d",
-
-        preparse : function (string) {
-            return string;
-        },
-
-        postformat : function (string) {
-            return string;
-        },
-
-        week : function (mom) {
-            return weekOfYear(mom, this._week.dow, this._week.doy).week;
-        },
-
-        _week : {
-            dow : 0, // Sunday is the first day of the week.
-            doy : 6  // The week that contains Jan 1st is the first week of the year.
-        },
-
-        _invalidDate: 'Invalid date',
-        invalidDate: function () {
-            return this._invalidDate;
-        }
-    });
-
-    // Loads a language definition into the `languages` cache.  The function
-    // takes a key and optionally values.  If not in the browser and no values
-    // are provided, it will load the language file module.  As a convenience,
-    // this function also returns the language values.
-    function loadLang(key, values) {
-        values.abbr = key;
-        if (!languages[key]) {
-            languages[key] = new Language();
-        }
-        languages[key].set(values);
-        return languages[key];
-    }
-
-    // Remove a language from the `languages` cache. Mostly useful in tests.
-    function unloadLang(key) {
-        delete languages[key];
-    }
-
-    // Determines which language definition to use and returns it.
-    //
-    // With no parameters, it will return the global language.  If you
-    // pass in a language key, such as 'en', it will return the
-    // definition for 'en', so long as 'en' has already been loaded using
-    // moment.lang.
-    function getLangDefinition(key) {
-        var i = 0, j, lang, next, split,
-            get = function (k) {
-                if (!languages[k] && hasModule) {
-                    try {
-                        require('./lang/' + k);
-                    } catch (e) { }
-                }
-                return languages[k];
-            };
-
-        if (!key) {
-            return moment.fn._lang;
-        }
-
-        if (!isArray(key)) {
-            //short-circuit everything else
-            lang = get(key);
-            if (lang) {
-                return lang;
-            }
-            key = [key];
-        }
-
-        //pick the language from the array
-        //try ['en-au', 'en-gb'] as 'en-au', 'en-gb', 'en', as in move through the list trying each
-        //substring from most specific to least, but move to the next array item if it's a more specific variant than the current root
-        while (i < key.length) {
-            split = normalizeLanguage(key[i]).split('-');
-            j = split.length;
-            next = normalizeLanguage(key[i + 1]);
-            next = next ? next.split('-') : null;
-            while (j > 0) {
-                lang = get(split.slice(0, j).join('-'));
-                if (lang) {
-                    return lang;
-                }
-                if (next && next.length >= j && compareArrays(split, next, true) >= j - 1) {
-                    //the next array item is better than a shallower substring of this one
-                    break;
-                }
-                j--;
-            }
-            i++;
-        }
-        return moment.fn._lang;
-    }
-
-    /************************************
-        Formatting
-    ************************************/
-
-
-    function removeFormattingTokens(input) {
-        if (input.match(/\[[\s\S]/)) {
-            return input.replace(/^\[|\]$/g, "");
-        }
-        return input.replace(/\\/g, "");
-    }
-
-    function makeFormatFunction(format) {
-        var array = format.match(formattingTokens), i, length;
-
-        for (i = 0, length = array.length; i < length; i++) {
-            if (formatTokenFunctions[array[i]]) {
-                array[i] = formatTokenFunctions[array[i]];
-            } else {
-                array[i] = removeFormattingTokens(array[i]);
-            }
-        }
-
-        return function (mom) {
-            var output = "";
-            for (i = 0; i < length; i++) {
-                output += array[i] instanceof Function ? array[i].call(mom, format) : array[i];
-            }
-            return output;
-        };
-    }
-
-    // format date using native date object
-    function formatMoment(m, format) {
-
-        if (!m.isValid()) {
-            return m.lang().invalidDate();
-        }
-
-        format = expandFormat(format, m.lang());
-
-        if (!formatFunctions[format]) {
-            formatFunctions[format] = makeFormatFunction(format);
-        }
-
-        return formatFunctions[format](m);
-    }
-
-    function expandFormat(format, lang) {
-        var i = 5;
-
-        function replaceLongDateFormatTokens(input) {
-            return lang.longDateFormat(input) || input;
-        }
-
-        localFormattingTokens.lastIndex = 0;
-        while (i >= 0 && localFormattingTokens.test(format)) {
-            format = format.replace(localFormattingTokens, replaceLongDateFormatTokens);
-            localFormattingTokens.lastIndex = 0;
-            i -= 1;
-        }
-
-        return format;
-    }
-
-
-    /************************************
-        Parsing
-    ************************************/
-
-
-    // get the regex to find the next token
-    function getParseRegexForToken(token, config) {
-        var a, strict = config._strict;
-        switch (token) {
-        case 'Q':
-            return parseTokenOneDigit;
-        case 'DDDD':
-            return parseTokenThreeDigits;
-        case 'YYYY':
-        case 'GGGG':
-        case 'gggg':
-            return strict ? parseTokenFourDigits : parseTokenOneToFourDigits;
-        case 'Y':
-        case 'G':
-        case 'g':
-            return parseTokenSignedNumber;
-        case 'YYYYYY':
-        case 'YYYYY':
-        case 'GGGGG':
-        case 'ggggg':
-            return strict ? parseTokenSixDigits : parseTokenOneToSixDigits;
-        case 'S':
-            if (strict) { return parseTokenOneDigit; }
-            /* falls through */
-        case 'SS':
-            if (strict) { return parseTokenTwoDigits; }
-            /* falls through */
-        case 'SSS':
-            if (strict) { return parseTokenThreeDigits; }
-            /* falls through */
-        case 'DDD':
-            return parseTokenOneToThreeDigits;
-        case 'MMM':
-        case 'MMMM':
-        case 'dd':
-        case 'ddd':
-        case 'dddd':
-            return parseTokenWord;
-        case 'a':
-        case 'A':
-            return getLangDefinition(config._l)._meridiemParse;
-        case 'X':
-            return parseTokenTimestampMs;
-        case 'Z':
-        case 'ZZ':
-            return parseTokenTimezone;
-        case 'T':
-            return parseTokenT;
-        case 'SSSS':
-            return parseTokenDigits;
-        case 'MM':
-        case 'DD':
-        case 'YY':
-        case 'GG':
-        case 'gg':
-        case 'HH':
-        case 'hh':
-        case 'mm':
-        case 'ss':
-        case 'ww':
-        case 'WW':
-            return strict ? parseTokenTwoDigits : parseTokenOneOrTwoDigits;
-        case 'M':
-        case 'D':
-        case 'd':
-        case 'H':
-        case 'h':
-        case 'm':
-        case 's':
-        case 'w':
-        case 'W':
-        case 'e':
-        case 'E':
-            return parseTokenOneOrTwoDigits;
-        case 'Do':
-            return parseTokenOrdinal;
-        default :
-            a = new RegExp(regexpEscape(unescapeFormat(token.replace('\\', '')), "i"));
-            return a;
-        }
-    }
-
-    function timezoneMinutesFromString(string) {
-        string = string || "";
-        var possibleTzMatches = (string.match(parseTokenTimezone) || []),
-            tzChunk = possibleTzMatches[possibleTzMatches.length - 1] || [],
-            parts = (tzChunk + '').match(parseTimezoneChunker) || ['-', 0, 0],
-            minutes = +(parts[1] * 60) + toInt(parts[2]);
-
-        return parts[0] === '+' ? -minutes : minutes;
-    }
-
-    // function to convert string input to date
-    function addTimeToArrayFromToken(token, input, config) {
-        var a, datePartArray = config._a;
-
-        switch (token) {
-        // QUARTER
-        case 'Q':
-            if (input != null) {
-                datePartArray[MONTH] = (toInt(input) - 1) * 3;
-            }
-            break;
-        // MONTH
-        case 'M' : // fall through to MM
-        case 'MM' :
-            if (input != null) {
-                datePartArray[MONTH] = toInt(input) - 1;
-            }
-            break;
-        case 'MMM' : // fall through to MMMM
-        case 'MMMM' :
-            a = getLangDefinition(config._l).monthsParse(input);
-            // if we didn't find a month name, mark the date as invalid.
-            if (a != null) {
-                datePartArray[MONTH] = a;
-            } else {
-                config._pf.invalidMonth = input;
-            }
-            break;
-        // DAY OF MONTH
-        case 'D' : // fall through to DD
-        case 'DD' :
-            if (input != null) {
-                datePartArray[DATE] = toInt(input);
-            }
-            break;
-        case 'Do' :
-            if (input != null) {
-                datePartArray[DATE] = toInt(parseInt(input, 10));
-            }
-            break;
-        // DAY OF YEAR
-        case 'DDD' : // fall through to DDDD
-        case 'DDDD' :
-            if (input != null) {
-                config._dayOfYear = toInt(input);
-            }
-
-            break;
-        // YEAR
-        case 'YY' :
-            datePartArray[YEAR] = moment.parseTwoDigitYear(input);
-            break;
-        case 'YYYY' :
-        case 'YYYYY' :
-        case 'YYYYYY' :
-            datePartArray[YEAR] = toInt(input);
-            break;
-        // AM / PM
-        case 'a' : // fall through to A
-        case 'A' :
-            config._isPm = getLangDefinition(config._l).isPM(input);
-            break;
-        // 24 HOUR
-        case 'H' : // fall through to hh
-        case 'HH' : // fall through to hh
-        case 'h' : // fall through to hh
-        case 'hh' :
-            datePartArray[HOUR] = toInt(input);
-            break;
-        // MINUTE
-        case 'm' : // fall through to mm
-        case 'mm' :
-            datePartArray[MINUTE] = toInt(input);
-            break;
-        // SECOND
-        case 's' : // fall through to ss
-        case 'ss' :
-            datePartArray[SECOND] = toInt(input);
-            break;
-        // MILLISECOND
-        case 'S' :
-        case 'SS' :
-        case 'SSS' :
-        case 'SSSS' :
-            datePartArray[MILLISECOND] = toInt(('0.' + input) * 1000);
-            break;
-        // UNIX TIMESTAMP WITH MS
-        case 'X':
-            config._d = new Date(parseFloat(input) * 1000);
-            break;
-        // TIMEZONE
-        case 'Z' : // fall through to ZZ
-        case 'ZZ' :
-            config._useUTC = true;
-            config._tzm = timezoneMinutesFromString(input);
-            break;
-        case 'w':
-        case 'ww':
-        case 'W':
-        case 'WW':
-        case 'd':
-        case 'dd':
-        case 'ddd':
-        case 'dddd':
-        case 'e':
-        case 'E':
-            token = token.substr(0, 1);
-            /* falls through */
-        case 'gg':
-        case 'gggg':
-        case 'GG':
-        case 'GGGG':
-        case 'GGGGG':
-            token = token.substr(0, 2);
-            if (input) {
-                config._w = config._w || {};
-                config._w[token] = input;
-            }
-            break;
-        }
-    }
-
-    // convert an array to a date.
-    // the array should mirror the parameters below
-    // note: all values past the year are optional and will default to the lowest possible value.
-    // [year, month, day , hour, minute, second, millisecond]
-    function dateFromConfig(config) {
-        var i, date, input = [], currentDate,
-            yearToUse, fixYear, w, temp, lang, weekday, week;
-
-        if (config._d) {
-            return;
-        }
-
-        currentDate = currentDateArray(config);
-
-        //compute day of the year from weeks and weekdays
-        if (config._w && config._a[DATE] == null && config._a[MONTH] == null) {
-            fixYear = function (val) {
-                var intVal = parseInt(val, 10);
-                return val ?
-                  (val.length < 3 ? (intVal > 68 ? 1900 + intVal : 2000 + intVal) : intVal) :
-                  (config._a[YEAR] == null ? moment().weekYear() : config._a[YEAR]);
-            };
-
-            w = config._w;
-            if (w.GG != null || w.W != null || w.E != null) {
-                temp = dayOfYearFromWeeks(fixYear(w.GG), w.W || 1, w.E, 4, 1);
-            }
-            else {
-                lang = getLangDefinition(config._l);
-                weekday = w.d != null ?  parseWeekday(w.d, lang) :
-                  (w.e != null ?  parseInt(w.e, 10) + lang._week.dow : 0);
-
-                week = parseInt(w.w, 10) || 1;
-
-                //if we're parsing 'd', then the low day numbers may be next week
-                if (w.d != null && weekday < lang._week.dow) {
-                    week++;
-                }
-
-                temp = dayOfYearFromWeeks(fixYear(w.gg), week, weekday, lang._week.doy, lang._week.dow);
-            }
-
-            config._a[YEAR] = temp.year;
-            config._dayOfYear = temp.dayOfYear;
-        }
-
-        //if the day of the year is set, figure out what it is
-        if (config._dayOfYear) {
-            yearToUse = config._a[YEAR] == null ? currentDate[YEAR] : config._a[YEAR];
-
-            if (config._dayOfYear > daysInYear(yearToUse)) {
-                config._pf._overflowDayOfYear = true;
-            }
-
-            date = makeUTCDate(yearToUse, 0, config._dayOfYear);
-            config._a[MONTH] = date.getUTCMonth();
-            config._a[DATE] = date.getUTCDate();
-        }
-
-        // Default to current date.
-        // * if no year, month, day of month are given, default to today
-        // * if day of month is given, default month and year
-        // * if month is given, default only year
-        // * if year is given, don't default anything
-        for (i = 0; i < 3 && config._a[i] == null; ++i) {
-            config._a[i] = input[i] = currentDate[i];
-        }
-
-        // Zero out whatever was not defaulted, including time
-        for (; i < 7; i++) {
-            config._a[i] = input[i] = (config._a[i] == null) ? (i === 2 ? 1 : 0) : config._a[i];
-        }
-
-        // add the offsets to the time to be parsed so that we can have a clean array for checking isValid
-        input[HOUR] += toInt((config._tzm || 0) / 60);
-        input[MINUTE] += toInt((config._tzm || 0) % 60);
-
-        config._d = (config._useUTC ? makeUTCDate : makeDate).apply(null, input);
-    }
-
-    function dateFromObject(config) {
-        var normalizedInput;
-
-        if (config._d) {
-            return;
-        }
-
-        normalizedInput = normalizeObjectUnits(config._i);
-        config._a = [
-            normalizedInput.year,
-            normalizedInput.month,
-            normalizedInput.day,
-            normalizedInput.hour,
-            normalizedInput.minute,
-            normalizedInput.second,
-            normalizedInput.millisecond
-        ];
-
-        dateFromConfig(config);
-    }
-
-    function currentDateArray(config) {
-        var now = new Date();
-        if (config._useUTC) {
-            return [
-                now.getUTCFullYear(),
-                now.getUTCMonth(),
-                now.getUTCDate()
-            ];
-        } else {
-            return [now.getFullYear(), now.getMonth(), now.getDate()];
-        }
-    }
-
-    // date from string and format string
-    function makeDateFromStringAndFormat(config) {
-
-        config._a = [];
-        config._pf.empty = true;
-
-        // This array is used to make a Date, either with `new Date` or `Date.UTC`
-        var lang = getLangDefinition(config._l),
-            string = '' + config._i,
-            i, parsedInput, tokens, token, skipped,
-            stringLength = string.length,
-            totalParsedInputLength = 0;
-
-        tokens = expandFormat(config._f, lang).match(formattingTokens) || [];
-
-        for (i = 0; i < tokens.length; i++) {
-            token = tokens[i];
-            parsedInput = (string.match(getParseRegexForToken(token, config)) || [])[0];
-            if (parsedInput) {
-                skipped = string.substr(0, string.indexOf(parsedInput));
-                if (skipped.length > 0) {
-                    config._pf.unusedInput.push(skipped);
-                }
-                string = string.slice(string.indexOf(parsedInput) + parsedInput.length);
-                totalParsedInputLength += parsedInput.length;
-            }
-            // don't parse if it's not a known token
-            if (formatTokenFunctions[token]) {
-                if (parsedInput) {
-                    config._pf.empty = false;
-                }
-                else {
-                    config._pf.unusedTokens.push(token);
-                }
-                addTimeToArrayFromToken(token, parsedInput, config);
-            }
-            else if (config._strict && !parsedInput) {
-                config._pf.unusedTokens.push(token);
-            }
-        }
-
-        // add remaining unparsed input length to the string
-        config._pf.charsLeftOver = stringLength - totalParsedInputLength;
-        if (string.length > 0) {
-            config._pf.unusedInput.push(string);
-        }
-
-        // handle am pm
-        if (config._isPm && config._a[HOUR] < 12) {
-            config._a[HOUR] += 12;
-        }
-        // if is 12 am, change hours to 0
-        if (config._isPm === false && config._a[HOUR] === 12) {
-            config._a[HOUR] = 0;
-        }
-
-        dateFromConfig(config);
-        checkOverflow(config);
-    }
-
-    function unescapeFormat(s) {
-        return s.replace(/\\(\[)|\\(\])|\[([^\]\[]*)\]|\\(.)/g, function (matched, p1, p2, p3, p4) {
-            return p1 || p2 || p3 || p4;
-        });
-    }
-
-    // Code from http://stackoverflow.com/questions/3561493/is-there-a-regexp-escape-function-in-javascript
-    function regexpEscape(s) {
-        return s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-    }
-
-    // date from string and array of format strings
-    function makeDateFromStringAndArray(config) {
-        var tempConfig,
-            bestMoment,
-
-            scoreToBeat,
-            i,
-            currentScore;
-
-        if (config._f.length === 0) {
-            config._pf.invalidFormat = true;
-            config._d = new Date(NaN);
-            return;
-        }
-
-        for (i = 0; i < config._f.length; i++) {
-            currentScore = 0;
-            tempConfig = extend({}, config);
-            tempConfig._pf = defaultParsingFlags();
-            tempConfig._f = config._f[i];
-            makeDateFromStringAndFormat(tempConfig);
-
-            if (!isValid(tempConfig)) {
-                continue;
-            }
-
-            // if there is any input that was not parsed add a penalty for that format
-            currentScore += tempConfig._pf.charsLeftOver;
-
-            //or tokens
-            currentScore += tempConfig._pf.unusedTokens.length * 10;
-
-            tempConfig._pf.score = currentScore;
-
-            if (scoreToBeat == null || currentScore < scoreToBeat) {
-                scoreToBeat = currentScore;
-                bestMoment = tempConfig;
-            }
-        }
-
-        extend(config, bestMoment || tempConfig);
-    }
-
-    // date from iso format
-    function makeDateFromString(config) {
-        var i, l,
-            string = config._i,
-            match = isoRegex.exec(string);
-
-        if (match) {
-            config._pf.iso = true;
-            for (i = 0, l = isoDates.length; i < l; i++) {
-                if (isoDates[i][1].exec(string)) {
-                    // match[5] should be "T" or undefined
-                    config._f = isoDates[i][0] + (match[6] || " ");
-                    break;
-                }
-            }
-            for (i = 0, l = isoTimes.length; i < l; i++) {
-                if (isoTimes[i][1].exec(string)) {
-                    config._f += isoTimes[i][0];
-                    break;
-                }
-            }
-            if (string.match(parseTokenTimezone)) {
-                config._f += "Z";
-            }
-            makeDateFromStringAndFormat(config);
-        }
-        else {
-            moment.createFromInputFallback(config);
-        }
-    }
-
-    function makeDateFromInput(config) {
-        var input = config._i,
-            matched = aspNetJsonRegex.exec(input);
-
-        if (input === undefined) {
-            config._d = new Date();
-        } else if (matched) {
-            config._d = new Date(+matched[1]);
-        } else if (typeof input === 'string') {
-            makeDateFromString(config);
-        } else if (isArray(input)) {
-            config._a = input.slice(0);
-            dateFromConfig(config);
-        } else if (isDate(input)) {
-            config._d = new Date(+input);
-        } else if (typeof(input) === 'object') {
-            dateFromObject(config);
-        } else if (typeof(input) === 'number') {
-            // from milliseconds
-            config._d = new Date(input);
-        } else {
-            moment.createFromInputFallback(config);
-        }
-    }
-
-    function makeDate(y, m, d, h, M, s, ms) {
-        //can't just apply() to create a date:
-        //http://stackoverflow.com/questions/181348/instantiating-a-javascript-object-by-calling-prototype-constructor-apply
-        var date = new Date(y, m, d, h, M, s, ms);
-
-        //the date constructor doesn't accept years < 1970
-        if (y < 1970) {
-            date.setFullYear(y);
-        }
-        return date;
-    }
-
-    function makeUTCDate(y) {
-        var date = new Date(Date.UTC.apply(null, arguments));
-        if (y < 1970) {
-            date.setUTCFullYear(y);
-        }
-        return date;
-    }
-
-    function parseWeekday(input, language) {
-        if (typeof input === 'string') {
-            if (!isNaN(input)) {
-                input = parseInt(input, 10);
-            }
-            else {
-                input = language.weekdaysParse(input);
-                if (typeof input !== 'number') {
-                    return null;
-                }
-            }
-        }
-        return input;
-    }
-
-    /************************************
-        Relative Time
-    ************************************/
-
-
-    // helper function for moment.fn.from, moment.fn.fromNow, and moment.duration.fn.humanize
-    function substituteTimeAgo(string, number, withoutSuffix, isFuture, lang) {
-        return lang.relativeTime(number || 1, !!withoutSuffix, string, isFuture);
-    }
-
-    function relativeTime(milliseconds, withoutSuffix, lang) {
-        var seconds = round(Math.abs(milliseconds) / 1000),
-            minutes = round(seconds / 60),
-            hours = round(minutes / 60),
-            days = round(hours / 24),
-            years = round(days / 365),
-            args = seconds < 45 && ['s', seconds] ||
-                minutes === 1 && ['m'] ||
-                minutes < 45 && ['mm', minutes] ||
-                hours === 1 && ['h'] ||
-                hours < 22 && ['hh', hours] ||
-                days === 1 && ['d'] ||
-                days <= 25 && ['dd', days] ||
-                days <= 45 && ['M'] ||
-                days < 345 && ['MM', round(days / 30)] ||
-                years === 1 && ['y'] || ['yy', years];
-        args[2] = withoutSuffix;
-        args[3] = milliseconds > 0;
-        args[4] = lang;
-        return substituteTimeAgo.apply({}, args);
-    }
-
-
-    /************************************
-        Week of Year
-    ************************************/
-
-
-    // firstDayOfWeek       0 = sun, 6 = sat
-    //                      the day of the week that starts the week
-    //                      (usually sunday or monday)
-    // firstDayOfWeekOfYear 0 = sun, 6 = sat
-    //                      the first week is the week that contains the first
-    //                      of this day of the week
-    //                      (eg. ISO weeks use thursday (4))
-    function weekOfYear(mom, firstDayOfWeek, firstDayOfWeekOfYear) {
-        var end = firstDayOfWeekOfYear - firstDayOfWeek,
-            daysToDayOfWeek = firstDayOfWeekOfYear - mom.day(),
-            adjustedMoment;
-
-
-        if (daysToDayOfWeek > end) {
-            daysToDayOfWeek -= 7;
-        }
-
-        if (daysToDayOfWeek < end - 7) {
-            daysToDayOfWeek += 7;
-        }
-
-        adjustedMoment = moment(mom).add('d', daysToDayOfWeek);
-        return {
-            week: Math.ceil(adjustedMoment.dayOfYear() / 7),
-            year: adjustedMoment.year()
-        };
-    }
-
-    //http://en.wikipedia.org/wiki/ISO_week_date#Calculating_a_date_given_the_year.2C_week_number_and_weekday
-    function dayOfYearFromWeeks(year, week, weekday, firstDayOfWeekOfYear, firstDayOfWeek) {
-        var d = makeUTCDate(year, 0, 1).getUTCDay(), daysToAdd, dayOfYear;
-
-        weekday = weekday != null ? weekday : firstDayOfWeek;
-        daysToAdd = firstDayOfWeek - d + (d > firstDayOfWeekOfYear ? 7 : 0) - (d < firstDayOfWeek ? 7 : 0);
-        dayOfYear = 7 * (week - 1) + (weekday - firstDayOfWeek) + daysToAdd + 1;
-
-        return {
-            year: dayOfYear > 0 ? year : year - 1,
-            dayOfYear: dayOfYear > 0 ?  dayOfYear : daysInYear(year - 1) + dayOfYear
-        };
-    }
-
-    /************************************
-        Top Level Functions
-    ************************************/
-
-    function makeMoment(config) {
-        var input = config._i,
-            format = config._f;
-
-        if (input === null || (format === undefined && input === '')) {
-            return moment.invalid({nullInput: true});
-        }
-
-        if (typeof input === 'string') {
-            config._i = input = getLangDefinition().preparse(input);
-        }
-
-        if (moment.isMoment(input)) {
-            config = cloneMoment(input);
-
-            config._d = new Date(+input._d);
-        } else if (format) {
-            if (isArray(format)) {
-                makeDateFromStringAndArray(config);
-            } else {
-                makeDateFromStringAndFormat(config);
-            }
-        } else {
-            makeDateFromInput(config);
-        }
-
-        return new Moment(config);
-    }
-
-    moment = function (input, format, lang, strict) {
-        var c;
-
-        if (typeof(lang) === "boolean") {
-            strict = lang;
-            lang = undefined;
-        }
-        // object construction must be done this way.
-        // https://github.com/moment/moment/issues/1423
-        c = {};
-        c._isAMomentObject = true;
-        c._i = input;
-        c._f = format;
-        c._l = lang;
-        c._strict = strict;
-        c._isUTC = false;
-        c._pf = defaultParsingFlags();
-
-        return makeMoment(c);
-    };
-
-    moment.suppressDeprecationWarnings = false;
-
-    moment.createFromInputFallback = deprecate(
-            "moment construction falls back to js Date. This is " +
-            "discouraged and will be removed in upcoming major " +
-            "release. Please refer to " +
-            "https://github.com/moment/moment/issues/1407 for more info.",
-            function (config) {
-        config._d = new Date(config._i);
-    });
-
-    // creating with utc
-    moment.utc = function (input, format, lang, strict) {
-        var c;
-
-        if (typeof(lang) === "boolean") {
-            strict = lang;
-            lang = undefined;
-        }
-        // object construction must be done this way.
-        // https://github.com/moment/moment/issues/1423
-        c = {};
-        c._isAMomentObject = true;
-        c._useUTC = true;
-        c._isUTC = true;
-        c._l = lang;
-        c._i = input;
-        c._f = format;
-        c._strict = strict;
-        c._pf = defaultParsingFlags();
-
-        return makeMoment(c).utc();
-    };
-
-    // creating with unix timestamp (in seconds)
-    moment.unix = function (input) {
-        return moment(input * 1000);
-    };
-
-    // duration
-    moment.duration = function (input, key) {
-        var duration = input,
-            // matching against regexp is expensive, do it on demand
-            match = null,
-            sign,
-            ret,
-            parseIso;
-
-        if (moment.isDuration(input)) {
-            duration = {
-                ms: input._milliseconds,
-                d: input._days,
-                M: input._months
-            };
-        } else if (typeof input === 'number') {
-            duration = {};
-            if (key) {
-                duration[key] = input;
-            } else {
-                duration.milliseconds = input;
-            }
-        } else if (!!(match = aspNetTimeSpanJsonRegex.exec(input))) {
-            sign = (match[1] === "-") ? -1 : 1;
-            duration = {
-                y: 0,
-                d: toInt(match[DATE]) * sign,
-                h: toInt(match[HOUR]) * sign,
-                m: toInt(match[MINUTE]) * sign,
-                s: toInt(match[SECOND]) * sign,
-                ms: toInt(match[MILLISECOND]) * sign
-            };
-        } else if (!!(match = isoDurationRegex.exec(input))) {
-            sign = (match[1] === "-") ? -1 : 1;
-            parseIso = function (inp) {
-                // We'd normally use ~~inp for this, but unfortunately it also
-                // converts floats to ints.
-                // inp may be undefined, so careful calling replace on it.
-                var res = inp && parseFloat(inp.replace(',', '.'));
-                // apply sign while we're at it
-                return (isNaN(res) ? 0 : res) * sign;
-            };
-            duration = {
-                y: parseIso(match[2]),
-                M: parseIso(match[3]),
-                d: parseIso(match[4]),
-                h: parseIso(match[5]),
-                m: parseIso(match[6]),
-                s: parseIso(match[7]),
-                w: parseIso(match[8])
-            };
-        }
-
-        ret = new Duration(duration);
-
-        if (moment.isDuration(input) && input.hasOwnProperty('_lang')) {
-            ret._lang = input._lang;
-        }
-
-        return ret;
-    };
-
-    // version number
-    moment.version = VERSION;
-
-    // default format
-    moment.defaultFormat = isoFormat;
-
-    // Plugins that add properties should also add the key here (null value),
-    // so we can properly clone ourselves.
-    moment.momentProperties = momentProperties;
-
-    // This function will be called whenever a moment is mutated.
-    // It is intended to keep the offset in sync with the timezone.
-    moment.updateOffset = function () {};
-
-    // This function will load languages and then set the global language.  If
-    // no arguments are passed in, it will simply return the current global
-    // language key.
-    moment.lang = function (key, values) {
-        var r;
-        if (!key) {
-            return moment.fn._lang._abbr;
-        }
-        if (values) {
-            loadLang(normalizeLanguage(key), values);
-        } else if (values === null) {
-            unloadLang(key);
-            key = 'en';
-        } else if (!languages[key]) {
-            getLangDefinition(key);
-        }
-        r = moment.duration.fn._lang = moment.fn._lang = getLangDefinition(key);
-        return r._abbr;
-    };
-
-    // returns language data
-    moment.langData = function (key) {
-        if (key && key._lang && key._lang._abbr) {
-            key = key._lang._abbr;
-        }
-        return getLangDefinition(key);
-    };
-
-    // compare moment object
-    moment.isMoment = function (obj) {
-        return obj instanceof Moment ||
-            (obj != null &&  obj.hasOwnProperty('_isAMomentObject'));
-    };
-
-    // for typechecking Duration objects
-    moment.isDuration = function (obj) {
-        return obj instanceof Duration;
-    };
-
-    for (i = lists.length - 1; i >= 0; --i) {
-        makeList(lists[i]);
-    }
-
-    moment.normalizeUnits = function (units) {
-        return normalizeUnits(units);
-    };
-
-    moment.invalid = function (flags) {
-        var m = moment.utc(NaN);
-        if (flags != null) {
-            extend(m._pf, flags);
-        }
-        else {
-            m._pf.userInvalidated = true;
-        }
-
-        return m;
-    };
-
-    moment.parseZone = function () {
-        return moment.apply(null, arguments).parseZone();
-    };
-
-    moment.parseTwoDigitYear = function (input) {
-        return toInt(input) + (toInt(input) > 68 ? 1900 : 2000);
-    };
-
-    /************************************
-        Moment Prototype
-    ************************************/
-
-
-    extend(moment.fn = Moment.prototype, {
-
-        clone : function () {
-            return moment(this);
-        },
-
-        valueOf : function () {
-            return +this._d + ((this._offset || 0) * 60000);
-        },
-
-        unix : function () {
-            return Math.floor(+this / 1000);
-        },
-
-        toString : function () {
-            return this.clone().lang('en').format("ddd MMM DD YYYY HH:mm:ss [GMT]ZZ");
-        },
-
-        toDate : function () {
-            return this._offset ? new Date(+this) : this._d;
-        },
-
-        toISOString : function () {
-            var m = moment(this).utc();
-            if (0 < m.year() && m.year() <= 9999) {
-                return formatMoment(m, 'YYYY-MM-DD[T]HH:mm:ss.SSS[Z]');
-            } else {
-                return formatMoment(m, 'YYYYYY-MM-DD[T]HH:mm:ss.SSS[Z]');
-            }
-        },
-
-        toArray : function () {
-            var m = this;
-            return [
-                m.year(),
-                m.month(),
-                m.date(),
-                m.hours(),
-                m.minutes(),
-                m.seconds(),
-                m.milliseconds()
-            ];
-        },
-
-        isValid : function () {
-            return isValid(this);
-        },
-
-        isDSTShifted : function () {
-
-            if (this._a) {
-                return this.isValid() && compareArrays(this._a, (this._isUTC ? moment.utc(this._a) : moment(this._a)).toArray()) > 0;
-            }
-
-            return false;
-        },
-
-        parsingFlags : function () {
-            return extend({}, this._pf);
-        },
-
-        invalidAt: function () {
-            return this._pf.overflow;
-        },
-
-        utc : function () {
-            return this.zone(0);
-        },
-
-        local : function () {
-            this.zone(0);
-            this._isUTC = false;
-            return this;
-        },
-
-        format : function (inputString) {
-            var output = formatMoment(this, inputString || moment.defaultFormat);
-            return this.lang().postformat(output);
-        },
-
-        add : function (input, val) {
-            var dur;
-            // switch args to support add('s', 1) and add(1, 's')
-            if (typeof input === 'string') {
-                dur = moment.duration(+val, input);
-            } else {
-                dur = moment.duration(input, val);
-            }
-            addOrSubtractDurationFromMoment(this, dur, 1);
-            return this;
-        },
-
-        subtract : function (input, val) {
-            var dur;
-            // switch args to support subtract('s', 1) and subtract(1, 's')
-            if (typeof input === 'string') {
-                dur = moment.duration(+val, input);
-            } else {
-                dur = moment.duration(input, val);
-            }
-            addOrSubtractDurationFromMoment(this, dur, -1);
-            return this;
-        },
-
-        diff : function (input, units, asFloat) {
-            var that = makeAs(input, this),
-                zoneDiff = (this.zone() - that.zone()) * 6e4,
-                diff, output;
-
-            units = normalizeUnits(units);
-
-            if (units === 'year' || units === 'month') {
-                // average number of days in the months in the given dates
-                diff = (this.daysInMonth() + that.daysInMonth()) * 432e5; // 24 * 60 * 60 * 1000 / 2
-                // difference in months
-                output = ((this.year() - that.year()) * 12) + (this.month() - that.month());
-                // adjust by taking difference in days, average number of days
-                // and dst in the given months.
-                output += ((this - moment(this).startOf('month')) -
-                        (that - moment(that).startOf('month'))) / diff;
-                // same as above but with zones, to negate all dst
-                output -= ((this.zone() - moment(this).startOf('month').zone()) -
-                        (that.zone() - moment(that).startOf('month').zone())) * 6e4 / diff;
-                if (units === 'year') {
-                    output = output / 12;
-                }
-            } else {
-                diff = (this - that);
-                output = units === 'second' ? diff / 1e3 : // 1000
-                    units === 'minute' ? diff / 6e4 : // 1000 * 60
-                    units === 'hour' ? diff / 36e5 : // 1000 * 60 * 60
-                    units === 'day' ? (diff - zoneDiff) / 864e5 : // 1000 * 60 * 60 * 24, negate dst
-                    units === 'week' ? (diff - zoneDiff) / 6048e5 : // 1000 * 60 * 60 * 24 * 7, negate dst
-                    diff;
-            }
-            return asFloat ? output : absRound(output);
-        },
-
-        from : function (time, withoutSuffix) {
-            return moment.duration(this.diff(time)).lang(this.lang()._abbr).humanize(!withoutSuffix);
-        },
-
-        fromNow : function (withoutSuffix) {
-            return this.from(moment(), withoutSuffix);
-        },
-
-        calendar : function () {
-            // We want to compare the start of today, vs this.
-            // Getting start-of-today depends on whether we're zone'd or not.
-            var sod = makeAs(moment(), this).startOf('day'),
-                diff = this.diff(sod, 'days', true),
-                format = diff < -6 ? 'sameElse' :
-                    diff < -1 ? 'lastWeek' :
-                    diff < 0 ? 'lastDay' :
-                    diff < 1 ? 'sameDay' :
-                    diff < 2 ? 'nextDay' :
-                    diff < 7 ? 'nextWeek' : 'sameElse';
-            return this.format(this.lang().calendar(format, this));
-        },
-
-        isLeapYear : function () {
-            return isLeapYear(this.year());
-        },
-
-        isDST : function () {
-            return (this.zone() < this.clone().month(0).zone() ||
-                this.zone() < this.clone().month(5).zone());
-        },
-
-        day : function (input) {
-            var day = this._isUTC ? this._d.getUTCDay() : this._d.getDay();
-            if (input != null) {
-                input = parseWeekday(input, this.lang());
-                return this.add({ d : input - day });
-            } else {
-                return day;
-            }
-        },
-
-        month : makeAccessor('Month', true),
-
-        startOf: function (units) {
-            units = normalizeUnits(units);
-            // the following switch intentionally omits break keywords
-            // to utilize falling through the cases.
-            switch (units) {
-            case 'year':
-                this.month(0);
-                /* falls through */
-            case 'quarter':
-            case 'month':
-                this.date(1);
-                /* falls through */
-            case 'week':
-            case 'isoWeek':
-            case 'day':
-                this.hours(0);
-                /* falls through */
-            case 'hour':
-                this.minutes(0);
-                /* falls through */
-            case 'minute':
-                this.seconds(0);
-                /* falls through */
-            case 'second':
-                this.milliseconds(0);
-                /* falls through */
-            }
-
-            // weeks are a special case
-            if (units === 'week') {
-                this.weekday(0);
-            } else if (units === 'isoWeek') {
-                this.isoWeekday(1);
-            }
-
-            // quarters are also special
-            if (units === 'quarter') {
-                this.month(Math.floor(this.month() / 3) * 3);
-            }
-
-            return this;
-        },
-
-        endOf: function (units) {
-            units = normalizeUnits(units);
-            return this.startOf(units).add((units === 'isoWeek' ? 'week' : units), 1).subtract('ms', 1);
-        },
-
-        isAfter: function (input, units) {
-            units = typeof units !== 'undefined' ? units : 'millisecond';
-            return +this.clone().startOf(units) > +moment(input).startOf(units);
-        },
-
-        isBefore: function (input, units) {
-            units = typeof units !== 'undefined' ? units : 'millisecond';
-            return +this.clone().startOf(units) < +moment(input).startOf(units);
-        },
-
-        isSame: function (input, units) {
-            units = units || 'ms';
-            return +this.clone().startOf(units) === +makeAs(input, this).startOf(units);
-        },
-
-        min: function (other) {
-            other = moment.apply(null, arguments);
-            return other < this ? this : other;
-        },
-
-        max: function (other) {
-            other = moment.apply(null, arguments);
-            return other > this ? this : other;
-        },
-
-        // keepTime = true means only change the timezone, without affecting
-        // the local hour. So 5:31:26 +0300 --[zone(2, true)]--> 5:31:26 +0200
-        // It is possible that 5:31:26 doesn't exist int zone +0200, so we
-        // adjust the time as needed, to be valid.
-        //
-        // Keeping the time actually adds/subtracts (one hour)
-        // from the actual represented time. That is why we call updateOffset
-        // a second time. In case it wants us to change the offset again
-        // _changeInProgress == true case, then we have to adjust, because
-        // there is no such time in the given timezone.
-        zone : function (input, keepTime) {
-            var offset = this._offset || 0;
-            if (input != null) {
-                if (typeof input === "string") {
-                    input = timezoneMinutesFromString(input);
-                }
-                if (Math.abs(input) < 16) {
-                    input = input * 60;
-                }
-                this._offset = input;
-                this._isUTC = true;
-                if (offset !== input) {
-                    if (!keepTime || this._changeInProgress) {
-                        addOrSubtractDurationFromMoment(this,
-                                moment.duration(offset - input, 'm'), 1, false);
-                    } else if (!this._changeInProgress) {
-                        this._changeInProgress = true;
-                        moment.updateOffset(this, true);
-                        this._changeInProgress = null;
-                    }
-                }
-            } else {
-                return this._isUTC ? offset : this._d.getTimezoneOffset();
-            }
-            return this;
-        },
-
-        zoneAbbr : function () {
-            return this._isUTC ? "UTC" : "";
-        },
-
-        zoneName : function () {
-            return this._isUTC ? "Coordinated Universal Time" : "";
-        },
-
-        parseZone : function () {
-            if (this._tzm) {
-                this.zone(this._tzm);
-            } else if (typeof this._i === 'string') {
-                this.zone(this._i);
-            }
-            return this;
-        },
-
-        hasAlignedHourOffset : function (input) {
-            if (!input) {
-                input = 0;
-            }
-            else {
-                input = moment(input).zone();
-            }
-
-            return (this.zone() - input) % 60 === 0;
-        },
-
-        daysInMonth : function () {
-            return daysInMonth(this.year(), this.month());
-        },
-
-        dayOfYear : function (input) {
-            var dayOfYear = round((moment(this).startOf('day') - moment(this).startOf('year')) / 864e5) + 1;
-            return input == null ? dayOfYear : this.add("d", (input - dayOfYear));
-        },
-
-        quarter : function (input) {
-            return input == null ? Math.ceil((this.month() + 1) / 3) : this.month((input - 1) * 3 + this.month() % 3);
-        },
-
-        weekYear : function (input) {
-            var year = weekOfYear(this, this.lang()._week.dow, this.lang()._week.doy).year;
-            return input == null ? year : this.add("y", (input - year));
-        },
-
-        isoWeekYear : function (input) {
-            var year = weekOfYear(this, 1, 4).year;
-            return input == null ? year : this.add("y", (input - year));
-        },
-
-        week : function (input) {
-            var week = this.lang().week(this);
-            return input == null ? week : this.add("d", (input - week) * 7);
-        },
-
-        isoWeek : function (input) {
-            var week = weekOfYear(this, 1, 4).week;
-            return input == null ? week : this.add("d", (input - week) * 7);
-        },
-
-        weekday : function (input) {
-            var weekday = (this.day() + 7 - this.lang()._week.dow) % 7;
-            return input == null ? weekday : this.add("d", input - weekday);
-        },
-
-        isoWeekday : function (input) {
-            // behaves the same as moment#day except
-            // as a getter, returns 7 instead of 0 (1-7 range instead of 0-6)
-            // as a setter, sunday should belong to the previous week.
-            return input == null ? this.day() || 7 : this.day(this.day() % 7 ? input : input - 7);
-        },
-
-        isoWeeksInYear : function () {
-            return weeksInYear(this.year(), 1, 4);
-        },
-
-        weeksInYear : function () {
-            var weekInfo = this._lang._week;
-            return weeksInYear(this.year(), weekInfo.dow, weekInfo.doy);
-        },
-
-        get : function (units) {
-            units = normalizeUnits(units);
-            return this[units]();
-        },
-
-        set : function (units, value) {
-            units = normalizeUnits(units);
-            if (typeof this[units] === 'function') {
-                this[units](value);
-            }
-            return this;
-        },
-
-        // If passed a language key, it will set the language for this
-        // instance.  Otherwise, it will return the language configuration
-        // variables for this instance.
-        lang : function (key) {
-            if (key === undefined) {
-                return this._lang;
-            } else {
-                this._lang = getLangDefinition(key);
-                return this;
-            }
-        }
-    });
-
-    function rawMonthSetter(mom, value) {
-        var dayOfMonth;
-
-        // TODO: Move this out of here!
-        if (typeof value === 'string') {
-            value = mom.lang().monthsParse(value);
-            // TODO: Another silent failure?
-            if (typeof value !== 'number') {
-                return mom;
-            }
-        }
-
-        dayOfMonth = Math.min(mom.date(),
-                daysInMonth(mom.year(), value));
-        mom._d['set' + (mom._isUTC ? 'UTC' : '') + 'Month'](value, dayOfMonth);
-        return mom;
-    }
-
-    function rawGetter(mom, unit) {
-        return mom._d['get' + (mom._isUTC ? 'UTC' : '') + unit]();
-    }
-
-    function rawSetter(mom, unit, value) {
-        if (unit === 'Month') {
-            return rawMonthSetter(mom, value);
-        } else {
-            return mom._d['set' + (mom._isUTC ? 'UTC' : '') + unit](value);
-        }
-    }
-
-    function makeAccessor(unit, keepTime) {
-        return function (value) {
-            if (value != null) {
-                rawSetter(this, unit, value);
-                moment.updateOffset(this, keepTime);
-                return this;
-            } else {
-                return rawGetter(this, unit);
-            }
-        };
-    }
-
-    moment.fn.millisecond = moment.fn.milliseconds = makeAccessor('Milliseconds', false);
-    moment.fn.second = moment.fn.seconds = makeAccessor('Seconds', false);
-    moment.fn.minute = moment.fn.minutes = makeAccessor('Minutes', false);
-    // Setting the hour should keep the time, because the user explicitly
-    // specified which hour he wants. So trying to maintain the same hour (in
-    // a new timezone) makes sense. Adding/subtracting hours does not follow
-    // this rule.
-    moment.fn.hour = moment.fn.hours = makeAccessor('Hours', true);
-    // moment.fn.month is defined separately
-    moment.fn.date = makeAccessor('Date', true);
-    moment.fn.dates = deprecate("dates accessor is deprecated. Use date instead.", makeAccessor('Date', true));
-    moment.fn.year = makeAccessor('FullYear', true);
-    moment.fn.years = deprecate("years accessor is deprecated. Use year instead.", makeAccessor('FullYear', true));
-
-    // add plural methods
-    moment.fn.days = moment.fn.day;
-    moment.fn.months = moment.fn.month;
-    moment.fn.weeks = moment.fn.week;
-    moment.fn.isoWeeks = moment.fn.isoWeek;
-    moment.fn.quarters = moment.fn.quarter;
-
-    // add aliased format methods
-    moment.fn.toJSON = moment.fn.toISOString;
-
-    /************************************
-        Duration Prototype
-    ************************************/
-
-
-    extend(moment.duration.fn = Duration.prototype, {
-
-        _bubble : function () {
-            var milliseconds = this._milliseconds,
-                days = this._days,
-                months = this._months,
-                data = this._data,
-                seconds, minutes, hours, years;
-
-            // The following code bubbles up values, see the tests for
-            // examples of what that means.
-            data.milliseconds = milliseconds % 1000;
-
-            seconds = absRound(milliseconds / 1000);
-            data.seconds = seconds % 60;
-
-            minutes = absRound(seconds / 60);
-            data.minutes = minutes % 60;
-
-            hours = absRound(minutes / 60);
-            data.hours = hours % 24;
-
-            days += absRound(hours / 24);
-            data.days = days % 30;
-
-            months += absRound(days / 30);
-            data.months = months % 12;
-
-            years = absRound(months / 12);
-            data.years = years;
-        },
-
-        weeks : function () {
-            return absRound(this.days() / 7);
-        },
-
-        valueOf : function () {
-            return this._milliseconds +
-              this._days * 864e5 +
-              (this._months % 12) * 2592e6 +
-              toInt(this._months / 12) * 31536e6;
-        },
-
-        humanize : function (withSuffix) {
-            var difference = +this,
-                output = relativeTime(difference, !withSuffix, this.lang());
-
-            if (withSuffix) {
-                output = this.lang().pastFuture(difference, output);
-            }
-
-            return this.lang().postformat(output);
-        },
-
-        add : function (input, val) {
-            // supports only 2.0-style add(1, 's') or add(moment)
-            var dur = moment.duration(input, val);
-
-            this._milliseconds += dur._milliseconds;
-            this._days += dur._days;
-            this._months += dur._months;
-
-            this._bubble();
-
-            return this;
-        },
-
-        subtract : function (input, val) {
-            var dur = moment.duration(input, val);
-
-            this._milliseconds -= dur._milliseconds;
-            this._days -= dur._days;
-            this._months -= dur._months;
-
-            this._bubble();
-
-            return this;
-        },
-
-        get : function (units) {
-            units = normalizeUnits(units);
-            return this[units.toLowerCase() + 's']();
-        },
-
-        as : function (units) {
-            units = normalizeUnits(units);
-            return this['as' + units.charAt(0).toUpperCase() + units.slice(1) + 's']();
-        },
-
-        lang : moment.fn.lang,
-
-        toIsoString : function () {
-            // inspired by https://github.com/dordille/moment-isoduration/blob/master/moment.isoduration.js
-            var years = Math.abs(this.years()),
-                months = Math.abs(this.months()),
-                days = Math.abs(this.days()),
-                hours = Math.abs(this.hours()),
-                minutes = Math.abs(this.minutes()),
-                seconds = Math.abs(this.seconds() + this.milliseconds() / 1000);
-
-            if (!this.asSeconds()) {
-                // this is the same as C#'s (Noda) and python (isodate)...
-                // but not other JS (goog.date)
-                return 'P0D';
-            }
-
-            return (this.asSeconds() < 0 ? '-' : '') +
-                'P' +
-                (years ? years + 'Y' : '') +
-                (months ? months + 'M' : '') +
-                (days ? days + 'D' : '') +
-                ((hours || minutes || seconds) ? 'T' : '') +
-                (hours ? hours + 'H' : '') +
-                (minutes ? minutes + 'M' : '') +
-                (seconds ? seconds + 'S' : '');
-        }
-    });
-
-    function makeDurationGetter(name) {
-        moment.duration.fn[name] = function () {
-            return this._data[name];
-        };
-    }
-
-    function makeDurationAsGetter(name, factor) {
-        moment.duration.fn['as' + name] = function () {
-            return +this / factor;
-        };
-    }
-
-    for (i in unitMillisecondFactors) {
-        if (unitMillisecondFactors.hasOwnProperty(i)) {
-            makeDurationAsGetter(i, unitMillisecondFactors[i]);
-            makeDurationGetter(i.toLowerCase());
-        }
-    }
-
-    makeDurationAsGetter('Weeks', 6048e5);
-    moment.duration.fn.asMonths = function () {
-        return (+this - this.years() * 31536e6) / 2592e6 + this.years() * 12;
-    };
-
-
-    /************************************
-        Default Lang
-    ************************************/
-
-
-    // Set default language, other languages will inherit from English.
-    moment.lang('en', {
-        ordinal : function (number) {
-            var b = number % 10,
-                output = (toInt(number % 100 / 10) === 1) ? 'th' :
-                (b === 1) ? 'st' :
-                (b === 2) ? 'nd' :
-                (b === 3) ? 'rd' : 'th';
-            return number + output;
-        }
-    });
-
-    /* EMBED_LANGUAGES */
-
-    /************************************
-        Exposing Moment
-    ************************************/
-
-    function makeGlobal(shouldDeprecate) {
-        /*global ender:false */
-        if (typeof ender !== 'undefined') {
-            return;
-        }
-        oldGlobalMoment = globalScope.moment;
-        if (shouldDeprecate) {
-            globalScope.moment = deprecate(
-                    "Accessing Moment through the global scope is " +
-                    "deprecated, and will be removed in an upcoming " +
-                    "release.",
-                    moment);
-        } else {
-            globalScope.moment = moment;
-        }
-    }
-
-    // CommonJS module is defined
-    if (hasModule) {
-        module.exports = moment;
-    } else if (typeof define === "function" && define.amd) {
-        define("moment", function (require, exports, module) {
-            if (module.config && module.config() && module.config().noGlobal === true) {
-                // release the global variable
-                globalScope.moment = oldGlobalMoment;
-            }
-
-            return moment;
-        });
-        makeGlobal(true);
-    } else {
-        makeGlobal();
-    }
-}).call(this);
-
+  // Source: src/lib/keen-dataform.js
 // Source: src/lib/_intro.js
 !function (name, context, definition) {
 
@@ -4460,7 +989,7 @@
     context[name] = definition();
   }
 
-}('Dataform', chartstack, function() {
+}('Dataform', Keen, function() {
   'use strict';
 
 // Source: src/dataform.js
@@ -4569,7 +1098,12 @@
         if (interval == 0) {
           self.table[0].push(flat_target);
         }
-        self.table[interval+1].push(flat[flat_target] || null)
+        if (typeof(flat[flat_target]) || typeof flat[flat_target] == 'boolean') {
+          self.table[interval+1].push(flat[flat_target]);
+        } else {
+          self.table[interval+1].push(null);
+        }
+
       });
     });
 
@@ -4619,13 +1153,6 @@
       var labels = (label_set) ? parse.apply(self, [record].concat(label_set)) : [];
       if (labels) {
         discovered_labels = labels;
-      }
-    });
-
-    // Temp: turn booleans into strings
-    each(discovered_labels, function(label, index){
-      if (typeof label === 'boolean') {
-        discovered_labels[index] = String(label);
       }
     });
 
@@ -4774,7 +1301,7 @@
         if (el[target] || el[target] === 0 || el[target] !== void 0) {
           // Easy grab!
           if (el[target] === null) {
-            return result.push('');
+            return result.push(null);
           } else {
             return result.push(el[target]);
           }
@@ -5041,19 +1568,26 @@ function _applyFormat(value, opts){
       options = opts || {};
 
   if (options.method) {
-    var copy = output;
-    try {
-      output = eval(options.method).apply(null, [output, options]);
-    }
-    catch (e) {
-      output = copy;
+    var copy = output, method = window;
+    each(options.method.split("."), function(str, i){
+      if (method[str]){
+        method = method[str];
+      }
+    });
+    if (typeof method === 'function') {
+      try {
+        output = method.apply(null, [output, options]);
+      }
+      catch (e) {
+        output = copy;
+      }
     }
   }
 
   if (options.replace) {
-    each(options.replace, function(value, key){
+    each(options.replace, function(val, key){
       if (output == key || String(output) == String(key) || parseFloat(output) == parseFloat(key)) {
-        output = value;
+        output = val;
       }
     });
   }
@@ -5061,14 +1595,16 @@ function _applyFormat(value, opts){
   if (options.type && options.type == 'date') {
 
     if (options.format && moment && moment(value).isValid()) {
-      output = moment(value).format(options.format);
+      output = moment(output).format(options.format);
     } else {
-      output = new Date(value); //.toISOString();
+      output = new Date(output); //.toISOString();
     }
 
   }
 
   if (options.type && options.type == 'string') {
+
+    output = String(output);
 
     if (options.format) {
       switch (options.format) {
@@ -5091,11 +1627,11 @@ function _applyFormat(value, opts){
 
   }
 
-  if (options.type && options.type == 'number') {
+  if (options.type && options.type == 'number' && !isNaN(parseFloat(output))) {
 
-    if (options.format && !isNaN(parseFloat(output))) {
+    output = parseFloat(output);
 
-      output = parseFloat(output);
+    if (options.format) {
 
       // Set decimals
       if (options.format.indexOf('.') !== -1) {
@@ -5130,8 +1666,6 @@ function _applyFormat(value, opts){
 
   return output;
 }
-
-// dataform.format(index, options);
 
 // Source: src/lib/sort.js
 Dataform.prototype.sort = function(opts){
@@ -5271,880 +1805,1450 @@ Dataform.prototype.sort = function(opts){
   return Dataform;
 });
 
-/* global chartstack */
-// Data normalizing adaper for keen.io API.
-(function(cs){
-  var each = cs.each;
+  // Source: src/lib/keen-domready.js
+/*!
+  * domready (c) Dustin Diaz 2012 - License MIT
+  */
+// Modified header to work internally w/ Keen lib
+!function (name, context, definition) {
+  if (typeof module != 'undefined' && module.exports) module.exports = definition()
+  else if (typeof define == 'function' && define.amd) define(definition)
+  else context[name] = definition()
+}('domready', Keen.utils, function(ready) {
 
-  cs.addAdapter('keen-io', function(response){
-    var self = this, data;
-    var schema = self.schema || false;
+  var fns = [], fn, f = false
+    , doc = document
+    , testEl = doc.documentElement
+    , hack = testEl.doScroll
+    , domContentLoaded = 'DOMContentLoaded'
+    , addEventListener = 'addEventListener'
+    , onreadystatechange = 'onreadystatechange'
+    , readyState = 'readyState'
+    , loadedRgx = hack ? /^loaded|^c/ : /^loaded|c/
+    , loaded = loadedRgx.test(doc[readyState])
 
-    // Default Response Map
-    if (!schema) {
+  function flush(f) {
+    loaded = 1
+    while (f = fns.shift()) f()
+  }
 
-      schema = {
-        collection: "result",
-        unpack: {}
-      };
+  doc[addEventListener] && doc[addEventListener](domContentLoaded, fn = function () {
+    doc.removeEventListener(domContentLoaded, fn, f)
+    flush()
+  }, f)
 
-      if (response.result instanceof Array) {
 
-        if (response.result.length > 0 && response.result[0]['value'] !== void 0){
+  hack && doc.attachEvent(onreadystatechange, fn = function () {
+    if (/^c/.test(doc[readyState])) {
+      doc.detachEvent(onreadystatechange, fn)
+      flush()
+    }
+  })
 
-          if (response.result[0]['value'] instanceof Array) {
-            // Interval + Group_by
-
-            // Get value (interval result)
-            schema.unpack.value = "value -> result";
-
-            // Get label (group_by field)
-            for (var key in response.result[0]['value'][0]){
-              if (key !== "result") {
-                schema.unpack.label = "value -> " + key;
-                break;
-              }
-            }
-
-          } else {
-            // Interval, no Group_by
-            // Get value
-            schema.unpack.value = "value";
+  return (ready = hack ?
+    function (fn) {
+      self != top ?
+        loaded ? fn() : fns.push(fn) :
+        function () {
+          try {
+            testEl.doScroll('left')
+          } catch (e) {
+            return setTimeout(function() { ready(fn) }, 50)
           }
-        }
+          fn()
+        }()
+    } :
+    function (fn) {
+      loaded ? fn() : fns.push(fn)
+    })
+});
 
-        if (response.result.length > 0 && response.result[0]['timeframe']) {
-          // Get index (start time)
-          schema.unpack.index = {
-            path: "timeframe -> start",
-            type: "date",
-            //format: "MMM DD"
-            method: "moment"
-          };
-        }
+  // Source: src/lib/keen-spinner.js
+/**
+ * Copyright (c) 2011-2014 Felix Gnass
+ * Licensed under the MIT license
+ */
+// Modified to work internall with Keen lib
+(function(name, context, factory) {
 
-        if (response.result.length > 0 && response.result[0]['result']) {
-          // Get value (group_by)
-          schema.unpack.value = "result";
-          for (var key in response.result[0]){
-            if (key !== "result") {
-              schema.unpack.index = key;
-              break;
-            }
-          }
-        }
+  /* CommonJS */
+  if (typeof exports == 'object')  module.exports = factory()
 
-        if (response.result.length > 0 && typeof response.result[0] == "number") {
-          schema.collection = "";
-          schema.unpack.index = "steps -> event_collection";
-          schema.unpack.value = "result -> ";
-        }
+  /* AMD module */
+  else if (typeof define == 'function' && define.amd) define(factory)
 
-        if (response.result.length == 0) {
-          schema = false;
-          //data
-        }
+  /* Browser global */
+  else context[name] = factory()
+}
+("Spinner", Keen, function() {
+  "use strict";
 
+  var prefixes = ['webkit', 'Moz', 'ms', 'O'] /* Vendor prefixes */
+    , animations = {} /* Animation rules keyed by their name */
+    , useCssAnimations /* Whether to use CSS animations or setTimeout */
 
-      } else {
-        // Metric: { result: 2450 } -> [['result'],[2450]]
-        delete schema.unpack;
-        schema = {
-          collection: "",
-          select: [
-            {
-              path: "result",
-              type: "number",
-              label: "Metric",
-              format: "1,000"
-            }
-          ]
-        }
-      }
+  /**
+   * Utility function to create elements. If no tag name is given,
+   * a DIV is created. Optionally properties can be passed.
+   */
+  function createEl(tag, prop) {
+    var el = document.createElement(tag || 'div')
+      , n
 
+    for(n in prop) el[n] = prop[n]
+    return el
+  }
+
+  /**
+   * Appends children and returns the parent.
+   */
+  function ins(parent /* child1, child2, ...*/) {
+    for (var i=1, n=arguments.length; i<n; i++)
+      parent.appendChild(arguments[i])
+
+    return parent
+  }
+
+  /**
+   * Insert a new stylesheet to hold the @keyframe or VML rules.
+   */
+  var sheet = (function() {
+    var el = createEl('style', {type : 'text/css'})
+    ins(document.getElementsByTagName('head')[0], el)
+    return el.sheet || el.styleSheet
+  }())
+
+  /**
+   * Creates an opacity keyframe animation rule and returns its name.
+   * Since most mobile Webkits have timing issues with animation-delay,
+   * we create separate rules for each line/segment.
+   */
+  function addAnimation(alpha, trail, i, lines) {
+    var name = ['opacity', trail, ~~(alpha*100), i, lines].join('-')
+      , start = 0.01 + i/lines * 100
+      , z = Math.max(1 - (1-alpha) / trail * (100-start), alpha)
+      , prefix = useCssAnimations.substring(0, useCssAnimations.indexOf('Animation')).toLowerCase()
+      , pre = prefix && '-' + prefix + '-' || ''
+
+    if (!animations[name]) {
+      sheet.insertRule(
+        '@' + pre + 'keyframes ' + name + '{' +
+        '0%{opacity:' + z + '}' +
+        start + '%{opacity:' + alpha + '}' +
+        (start+0.01) + '%{opacity:1}' +
+        (start+trail) % 100 + '%{opacity:' + alpha + '}' +
+        '100%{opacity:' + z + '}' +
+        '}', sheet.cssRules.length)
+
+      animations[name] = 1
     }
 
-    if (schema) {
-      data = new cs.Dataform(response, schema);
-    } else {
-      data = { table: [] };
+    return name
+  }
+
+  /**
+   * Tries various vendor prefixes and returns the first supported property.
+   */
+  function vendor(el, prop) {
+    var s = el.style
+      , pp
+      , i
+
+    prop = prop.charAt(0).toUpperCase() + prop.slice(1)
+    for(i=0; i<prefixes.length; i++) {
+      pp = prefixes[i]+prop
+      if(s[pp] !== undefined) return pp
     }
-    return data;
-  });
+    if(s[prop] !== undefined) return prop
+  }
 
-})(chartstack);
+  /**
+   * Sets multiple style properties at once.
+   */
+  function css(el, prop) {
+    for (var n in prop)
+      el.style[vendor(el, n)||n] = prop[n]
 
-/* global google, chartstack */
-(function(cs){
-  cs.registerLibrary({
-    name: 'Keen',
-    namespace: 'keen-io',
-    charts: [{
-      type : 'Metric',
-      events: {
-        initialize: function(){
-          var css = document.createElement("style");
-          css.id = "cs-styles-keen-io";
-          css.type = "text/css";
-          css.innerHTML = "\
-.cs-widget { \n  background: #49c5b1; \n  border-radius: 4px; \n  color: #fff; \n  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; \n  padding: 10px 0; \n  text-align: center; \n} \
-.cs-widget-value { \n  display: block; \n  font-size: 84px; \n  font-weight: 700; \n  line-height: 84px; \n} \
-.cs-widget-title { \n  display: block; \n  font-size: 24px; \n  font-weight: 200; \n}";
-          if (!document.getElementById("cs-styles-keen-io")) {
-            document.body.appendChild(css);
+    return el
+  }
+
+  /**
+   * Fills in default values.
+   */
+  function merge(obj) {
+    for (var i=1; i < arguments.length; i++) {
+      var def = arguments[i]
+      for (var n in def)
+        if (obj[n] === undefined) obj[n] = def[n]
+    }
+    return obj
+  }
+
+  /**
+   * Returns the absolute page-offset of the given element.
+   */
+  function pos(el) {
+    var o = { x:el.offsetLeft, y:el.offsetTop }
+    while((el = el.offsetParent))
+      o.x+=el.offsetLeft, o.y+=el.offsetTop
+
+    return o
+  }
+
+  /**
+   * Returns the line color from the given string or array.
+   */
+  function getColor(color, idx) {
+    return typeof color == 'string' ? color : color[idx % color.length]
+  }
+
+  // Built-in defaults
+
+  var defaults = {
+    lines: 12,            // The number of lines to draw
+    length: 7,            // The length of each line
+    width: 5,             // The line thickness
+    radius: 10,           // The radius of the inner circle
+    rotate: 0,            // Rotation offset
+    corners: 1,           // Roundness (0..1)
+    color: '#000',        // #rgb or #rrggbb
+    direction: 1,         // 1: clockwise, -1: counterclockwise
+    speed: 1,             // Rounds per second
+    trail: 100,           // Afterglow percentage
+    opacity: 1/4,         // Opacity of the lines
+    fps: 20,              // Frames per second when using setTimeout()
+    zIndex: 2e9,          // Use a high z-index by default
+    className: 'spinner', // CSS class to assign to the element
+    top: '50%',           // center vertically
+    left: '50%',          // center horizontally
+    position: 'absolute'  // element position
+  }
+
+  /** The constructor */
+  function Spinner(o) {
+    this.opts = merge(o || {}, Spinner.defaults, defaults)
+  }
+
+  // Global defaults that override the built-ins:
+  Spinner.defaults = {}
+
+  merge(Spinner.prototype, {
+
+    /**
+     * Adds the spinner to the given target element. If this instance is already
+     * spinning, it is automatically removed from its previous target b calling
+     * stop() internally.
+     */
+    spin: function(target) {
+      this.stop()
+
+      var self = this
+        , o = self.opts
+        , el = self.el = css(createEl(0, {className: o.className}), {position: o.position, width: 0, zIndex: o.zIndex})
+        , mid = o.radius+o.length+o.width
+
+      css(el, {
+        left: o.left,
+        top: o.top
+      })
+
+      if (target) {
+        target.insertBefore(el, target.firstChild||null)
+      }
+
+      el.setAttribute('role', 'progressbar')
+      self.lines(el, self.opts)
+
+      if (!useCssAnimations) {
+        // No CSS animation support, use setTimeout() instead
+        var i = 0
+          , start = (o.lines - 1) * (1 - o.direction) / 2
+          , alpha
+          , fps = o.fps
+          , f = fps/o.speed
+          , ostep = (1-o.opacity) / (f*o.trail / 100)
+          , astep = f/o.lines
+
+        ;(function anim() {
+          i++;
+          for (var j = 0; j < o.lines; j++) {
+            alpha = Math.max(1 - (i + (o.lines - j) * astep) % f * ostep, o.opacity)
+
+            self.opacity(el, j * o.direction + start, alpha, o)
           }
-        },
-        update: function(){
-          this.el.innerHTML = '' +
-            '<div class="cs-widget cs-number" style="width:' + parseInt(this.width) + 'px;">' +
-            '<span class="cs-widget-value">' + this.data[0].table[1] + '</span>' +
-            '<span class="cs-widget-title">' + (this.title || 'Result') + '</span>' +
-            '</div>';
-        }
+          self.timeout = self.el && setTimeout(anim, ~~(1000/fps))
+        })()
       }
-    }]
-  });
-})(chartstack);
-
-/* global google, chartstack */
-(function(cs){
-  cs.registerLibrary({
-    name: 'GoogleCharts',
-    namespace: 'google',
-    attributes: ['animation', 'backgroundColor', 'bar', 'chartArea', 'fontName', 'fontSize', 'isStacked', 'hAxis', 'legend', 'orientation', 'titleTextStyle', 'tooltip', 'vAxis'],
-    // If loadLib exists it is called to load the graphic library.
-    // Must execute passed callback when the library is loaded.
-    // If loadLib does not exist, we assume the user loaded the library before
-    // chartstack.js already (most cases).
-    loadLib: function(cb){
-      cs.googleLoaded = function(){
-        cb();
-        delete cs.googleLoaded;
-      };
-      cs.loadScript("https://www.google.com/jsapi", function() {
-        if(typeof google === 'undefined'){
-          console.log("Problem loading visualizations.  Please contact us!");
-        } else {
-          google.load('visualization', '1.0', {
-              packages: ['corechart', 'table'],
-              callback: cs.googleLoaded
-          });
-        }
-      });
-      //document.write('\x3Cscript type="text/javascript" src="https://www.google.com/jsapi?autoload=' + encodeURIComponent('{"modules":[{"name":"visualization","version":"1","packages":["corechart","table"],callback: chartstack.googleLoaded}]}') + '">\x3C/script>');
-    },
-    charts: [{
-      type : 'AreaChart',
-      events: {
-        initialize: function(){
-          //this.trigger('error', 'testing pie errors');
-          this.render();
-        },
-        render: function(){
-          this._chart = this._chart || new google.visualization.AreaChart(this.el);
-        },
-        update: function(){
-          var data = google.visualization.arrayToDataTable(this.data[0].table);
-          var options = cs.extend(this.chartOptions, {
-            title: this.title || '',
-            height: parseInt(this.height),
-            width: parseInt(this.width)
-          });
-          this._chart.draw(data, options);
-        }
-      }
-    }, {
-      type : 'BarChart',
-      events: {
-        initialize: function(){
-          //console.log('bar!', this);
-          this.render();
-        },
-        render: function(){
-          this._chart = this._chart || new google.visualization.BarChart(this.el);
-        },
-        update: function(){
-          var data = google.visualization.arrayToDataTable(this.data[0].table);
-          var options = cs.extend(this.chartOptions, {
-            title: this.title || '',
-            height: parseInt(this.height),
-            width: parseInt(this.width)
-          });
-          this._chart.draw(data, options);
-        }
-      }
-    }, {
-      type : 'ColumnChart',
-      events: {
-        initialize: function(){
-          //console.log('bar!', this);
-          this.render();
-        },
-        render: function(){
-          this._chart = this._chart || new google.visualization.ColumnChart(this.el);
-          //this.chart.draw(data, options);
-        },
-        update: function(){
-          var data = google.visualization.arrayToDataTable(this.data[0].table);
-          var options = cs.extend(this.chartOptions, {
-            title: this.title || '',
-            height: parseInt(this.height),
-            width: parseInt(this.width)
-          });
-          this._chart.draw(data, options);
-        }
-      }
-    }, {
-      type : 'LineChart',
-      events: {
-        initialize: function(){
-          this.render();
-        },
-        render: function(){
-          this._chart = this._chart || new google.visualization.LineChart(this.el);
-        },
-        update: function(){
-          var data = google.visualization.arrayToDataTable(this.data[0].table);
-          var options = cs.extend(this.chartOptions, {
-            title: this.title || '',
-            height: parseInt(this.height),
-            width: parseInt(this.width)
-          });
-          this._chart.draw(data, options);
-        }
-      }
-    }, {
-      type : 'PieChart',
-      events: {
-        initialize: function(){
-          this.render();
-        },
-        render: function(){
-          this._chart = this._chart || new google.visualization.PieChart(this.el);
-        },
-        update: function(){
-          var data = google.visualization.arrayToDataTable(this.data[0].table);
-          var options = cs.extend(this.chartOptions, {
-            title: this.title || '',
-            height: parseInt(this.height),
-            width: parseInt(this.width)
-          });
-          this._chart.draw(data, options);
-        }
-      }
-    }, {
-      type : 'DataTable',
-      events: {
-        initialize: function(){
-          this.render();
-        },
-        render: function(){
-          this._chart = this._chart || new google.visualization.Table(this.el);
-          //this.chart.draw(data, options);
-        },
-        update: function(){
-          var data = google.visualization.arrayToDataTable(this.data[0].table);
-          var options = cs.extend(this.chartOptions, {
-            title: this.title || '',
-            height: parseInt(this.height),
-            width: parseInt(this.width)
-          });
-          this._chart.draw(data, options);
-        }
-      }
-    }]
-  });
-
-})(chartstack);
-
-(function(root){
-  var previousSimg = root.Simg;
-  var Simg = root.Simg = function(svg){
-    this.svg = svg;
-  };
-
-  Simg.noConflict = function(){
-    root.Simg = previousSimg;
-    return this;
-  };
-
-  Simg.getBase64Image = function(img) {
-    // From: http://stackoverflow.com/questions/934012/get-image-data-in-javascript
-    var canvas = document.createElement("canvas");
-    canvas.width = img.width;
-    canvas.height = img.height;
-
-    var ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0);
-    var dataURL = canvas.toDataURL("image/png");
-
-    return dataURL.replace(/^data:image\/(png|jpg);base64,/, "");
-  };
-
-  Simg.prototype = {
-    // Return SVG text.
-    toString: function(svg){
-      if (!svg){
-        throw new Error('.toString: No SVG found.');
-      }
-
-      [
-        ['version', 1.1],
-        ['xmlns', "http://www.w3.org/2000/svg"],
-      ].forEach(function(item){
-        svg.setAttribute(item[0], item[1]);
-      });
-      return svg.parentNode.innerHTML;
+      return self
     },
 
-    // Return canvas with this SVG drawn inside.
-    toCanvas: function(cb){
-      this.toSvgImage(function(img){
-        var canvas = document.createElement('canvas');
-        var context = canvas.getContext("2d");
-
-        canvas.width = img.width;
-        canvas.height = img.height;
-
-        context.drawImage(img, 0, 0);
-        cb(canvas);
-      });
+    /**
+     * Stops and removes the Spinner.
+     */
+    stop: function() {
+      var el = this.el
+      if (el) {
+        clearTimeout(this.timeout)
+        if (el.parentNode) el.parentNode.removeChild(el)
+        this.el = undefined
+      }
+      return this
     },
 
-    toSvgImage: function(cb){
-      var str = this.toString(this.svg);
-      var img = document.createElement('img');
+    /**
+     * Internal method that draws the individual lines. Will be overwritten
+     * in VML fallback mode below.
+     */
+    lines: function(el, o) {
+      var i = 0
+        , start = (o.lines - 1) * (1 - o.direction) / 2
+        , seg
 
-      if (cb){
-        img.onload = function(){
-          cb(img);
-        };
+      function fill(color, shadow) {
+        return css(createEl(), {
+          position: 'absolute',
+          width: (o.length+o.width) + 'px',
+          height: o.width + 'px',
+          background: color,
+          boxShadow: shadow,
+          transformOrigin: 'left',
+          transform: 'rotate(' + ~~(360/o.lines*i+o.rotate) + 'deg) translate(' + o.radius+'px' +',0)',
+          borderRadius: (o.corners * o.width>>1) + 'px'
+        })
       }
 
-      // Make the new img's source an SVG image.
-      img.setAttribute('src', 'data:image/svg+xml;base64,'+ btoa(str));
+      for (; i < o.lines; i++) {
+        seg = css(createEl(), {
+          position: 'absolute',
+          top: 1+~(o.width/2) + 'px',
+          transform: o.hwaccel ? 'translate3d(0,0,0)' : '',
+          opacity: o.opacity,
+          animation: useCssAnimations && addAnimation(o.opacity, o.trail, start + i * o.direction, o.lines) + ' ' + 1/o.speed + 's linear infinite'
+        })
+
+        if (o.shadow) ins(seg, css(fill('#000', '0 0 4px ' + '#000'), {top: 2+'px'}))
+        ins(el, ins(seg, fill(getColor(o.color, i), '0 0 1px rgba(0,0,0,.1)')))
+      }
+      return el
     },
 
-    // Returns callback to new img from SVG.
-    // Call with no arguments to return svg image element.
-    // Call with callback to return png image element.
-    toImg: function(cb){
-      this.toCanvas(function(canvas){
-        var canvasData = canvas.toDataURL("image/png");
-        var img = document.createElement('img');
-
-        img.onload = function(){
-          cb(img);
-        };
-
-        // Make pngImg's source the canvas data.
-        img.setAttribute('src', canvasData);
-      });
-    },
-
-    // Replace SVG with PNG img.
-    replace: function(cb){
-      var self = this;
-      this.toImg(function(img){
-        var parentNode = self.svg.parentNode;
-        parentNode.replaceChild(img, self.svg);
-        if (cb){
-          cb();
-        }
-      });
-    },
-
-    // Converts canvas to binary blob.
-    toBinaryBlob: function(cb){
-      this.toCanvas(function(canvas){
-        var dataUrl = canvas.toDataURL().replace(/^data:image\/(png|jpg);base64,/, "");
-        var byteString = atob(dataUrl);
-        // write the bytes of the string to an ArrayBuffer
-        var ab = new ArrayBuffer(byteString.length);
-        var ia = new Uint8Array(ab);
-        for (var i = 0; i < byteString.length; i++) {
-          ia[i] = byteString.charCodeAt(i);
-        }
-        var dataView = new DataView(ab);
-        var blob = new Blob([dataView], {type: "image/png"});
-        cb(blob);
-      });
-    },
-
-    // Trigger download of image.
-    download: function(){
-      this.toImg(function(img){
-        var a = document.createElement("a");
-        a.download = "chart.png";
-        a.href = img.getAttribute('src');
-        a.click();
-      });
+    /**
+     * Internal method that adjusts the opacity of a single line.
+     * Will be overwritten in VML fallback mode below.
+     */
+    opacity: function(el, i, val) {
+      if (i < el.childNodes.length) el.childNodes[i].style.opacity = val
     }
-  };
-})(this);
 
-chartstack.Simg = Simg.noConflict();
+  })
 
-  // Source: src/plugins/keen-chartstack.js
+
+  function initVML() {
+
+    /* Utility function to create a VML tag */
+    function vml(tag, attr) {
+      return createEl('<' + tag + ' xmlns="urn:schemas-microsoft.com:vml" class="spin-vml">', attr)
+    }
+
+    // No CSS transforms but VML support, add a CSS rule for VML elements:
+    sheet.addRule('.spin-vml', 'behavior:url(#default#VML)')
+
+    Spinner.prototype.lines = function(el, o) {
+      var r = o.length+o.width
+        , s = 2*r
+
+      function grp() {
+        return css(
+          vml('group', {
+            coordsize: s + ' ' + s,
+            coordorigin: -r + ' ' + -r
+          }),
+          { width: s, height: s }
+        )
+      }
+
+      var margin = -(o.width+o.length)*2 + 'px'
+        , g = css(grp(), {position: 'absolute', top: margin, left: margin})
+        , i
+
+      function seg(i, dx, filter) {
+        ins(g,
+          ins(css(grp(), {rotation: 360 / o.lines * i + 'deg', left: ~~dx}),
+            ins(css(vml('roundrect', {arcsize: o.corners}), {
+                width: r,
+                height: o.width,
+                left: o.radius,
+                top: -o.width>>1,
+                filter: filter
+              }),
+              vml('fill', {color: getColor(o.color, i), opacity: o.opacity}),
+              vml('stroke', {opacity: 0}) // transparent stroke to fix color bleeding upon opacity change
+            )
+          )
+        )
+      }
+
+      if (o.shadow)
+        for (i = 1; i <= o.lines; i++)
+          seg(i, -2, 'progid:DXImageTransform.Microsoft.Blur(pixelradius=2,makeshadow=1,shadowopacity=.3)')
+
+      for (i = 1; i <= o.lines; i++) seg(i)
+      return ins(el, g)
+    }
+
+    Spinner.prototype.opacity = function(el, i, val, o) {
+      var c = el.firstChild
+      o = o.shadow && o.lines || 0
+      if (c && i+o < c.childNodes.length) {
+        c = c.childNodes[i+o]; c = c && c.firstChild; c = c && c.firstChild
+        if (c) c.opacity = val
+      }
+    }
+  }
+
+  var probe = css(createEl('group'), {behavior: 'url(#default#VML)'})
+
+  if (!vendor(probe, 'transform') && probe.adj) initVML()
+  else useCssAnimations = vendor(probe, 'animation')
+
+  return Spinner
+
+}));
+
+  // Source: src/visualize.js
   /*!
   * ----------------------
-  * Keen IO Plugin
-  * Data Visualization
+  * Keen IO Visualization
   * ----------------------
   */
 
-  !function(name, context){
-    var Keen = context[name] || {};
-    var CS = context.chartstack; //.noConflict();
-    Keen.utils.parseParams = CS.parseParams;
-    Keen.Dataform = function(data, schema){
-      return new CS.Dataform(data, schema);
+  Keen.prototype.draw = function(query, selector, config) {
+    // Find DOM element, set height, build spinner
+    var config = config || {};
+    var id = selector.getAttribute("id");
+    var el = document.getElementById(id);
+
+    var placeholder = document.createElement("div");
+    placeholder.className = "keen-loading";
+    //placeholder.style.background = "#f2f2f2";
+    placeholder.style.height = (config.height || Keen.Visualization.defaults.height) + "px";
+    placeholder.style.position = "relative";
+    placeholder.style.width = (config.width || Keen.Visualization.defaults.width) + "px";
+    el.appendChild(placeholder);
+
+    var spinner = new Keen.Spinner({
+      lines: 10, // The number of lines to draw
+      length: 8, // The length of each line
+      width: 3, // The line thickness
+      radius: 10, // The radius of the inner circle
+      corners: 1, // Corner roundness (0..1)
+      rotate: 0, // The rotation offset
+      direction: 1, // 1: clockwise, -1: counterclockwise
+      color: '#4d4d4d', // #rgb or #rrggbb or array of colors
+      speed: 1, // Rounds per second
+      trail: 60, // Afterglow percentage
+      shadow: false, // Whether to render a shadow
+      hwaccel: false, // Whether to use hardware acceleration
+      className: 'keen-spinner', // The CSS class to assign to the spinner
+      zIndex: 2e9, // The z-index (defaults to 2000000000)
+      top: '50%', // Top position relative to parent
+      left: '50%' // Left position relative to parent
+    }).spin(placeholder);
+
+    var request = new Keen.Request(this, [query]);
+    request.on("complete", function(){
+      spinner.stop();
+      el.removeChild(placeholder);
+      this.draw(selector, config);
+    });
+
+    return request;
+  };
+
+
+  // -------------------------------
+  // Inject Request Draw Method
+  // -------------------------------
+  Keen.Request.prototype.draw = function(selector, config) {
+    _build_visual.call(this, selector, config);
+    this.on('complete', function(){
+      _build_visual.call(this, selector, config);
+    });
+    return this;
+  };
+
+  function _build_visual(selector, config){
+    this.visual = new Keen.Visualization(this, selector, config);
+  }
+
+
+  // -------------------------------
+  // Keen.Visualization
+  // -------------------------------
+  Keen.Visualization = function(req, selector, config){
+    var self = this, data, defaults, options, library, defaultType, dataformSchema;
+
+    // Backwoods cloning facility
+    defaults = JSON.parse(JSON.stringify(Keen.Visualization.defaults));
+
+    options = _extend(defaults, config || {});
+    library = Keen.Visualization.libraries[options.library];
+
+    options.el = selector;
+
+    dataformSchema = {
+      collection: 'result',
+      select: true
     };
 
+    // Build default title if necessary to do so
+    if (!options.title && req instanceof Keen.Request) {
+      options.title = (function(){
+        var analysis = req.queries[0].analysis.replace("_", " "),
+            collection = req.queries[0].get('event_collection'),
+            output;
+
+        output = analysis.replace( /\b./g, function(a){
+          return a.toUpperCase();
+        });
+
+        if (collection) {
+          output += ' - ' + collection;
+        }
+        return output;
+      })();
+    }
+
+    var isMetric = false,
+        isFunnel = false,
+        isInterval = false,
+        isGroupBy = false,
+        is2xGroupBy = false,
+        isExtraction = false;
+
+    if (req instanceof Keen.Request) {
+      // Handle known scenarios
+      isMetric = (typeof req.data.result == "number" || req.data.result == null) ? true : false,
+      isFunnel = (req.queries[0].get('steps')) ? true : false,
+      isInterval = (req.queries[0].get('interval')) ? true : false,
+      isGroupBy = (req.queries[0].get('group_by')) ? true : false,
+      is2xGroupBy = (req.queries[0].get('group_by') instanceof Array) ? true : false;
+      isExtraction = (req.queries[0].analysis == 'extraction') ? true : false;
+
+      data = (req.data instanceof Array) ? req.data[0] : req.data;
+
+    } else if (typeof req === "string") {
+      // Fetch a new resource
+      // _request.jsonp()
+      // _transform()
+
+    } else {
+      // Handle raw data
+      // _transform() and handle as usual
+      data = (req instanceof Array) ? req[0] : req;
+    }
+
+
     // -------------------------------
-    // Inject Request Draw Method
+    // Select a default chart type
     // -------------------------------
-    Keen.Request.prototype.draw = function(selector, config) {
-      var self = this;
-      if (!self.visual) {
-        self.visual = new Keen.Visualization(self, selector, config);
+
+    // Metric
+    if (isMetric) {
+      options.capable = ['metric'];
+      defaultType = 'metric';
+    }
+
+    // GroupBy
+    if (!isInterval && isGroupBy) {
+      options.capable = ['piechart', 'barchart', 'columnchart', 'datatable'];
+      defaultType = 'piechart';
+      if (options.chartType == 'barchart') {
+        options.chartOptions.legend = { position: 'none' };
       }
-      return self;
-    };
+    }
 
+    // Single Interval
+    if (isInterval) { // Series
+      options.capable = ['areachart', 'barchart', 'columnchart', 'linechart', 'datatable'];
+      defaultType = 'areachart';
+      if (!isGroupBy && options.library == 'google') {
+        options.chartOptions.legend = { position: 'none' };
+      }
+    }
+
+    // GroupBy Interval
+    if (isInterval && isGroupBy) {}
+
+    // Custom Dataset schema for
+    // complex query/response types
     // -------------------------------
-    // Set Visual Defaults
+
+    // Funnels
+    if (isFunnel) {
+      options.capable = ['areachart', 'barchart', 'columnchart', 'linechart', 'datatable'];
+      defaultType = 'columnchart';
+      if (options.library == 'google') {
+        options.chartOptions.legend = { position: 'none' };
+      }
+    }
+
+    // 2x GroupBy
+    if (is2xGroupBy) {
+      options.capable = ['areachart', 'barchart', 'columnchart', 'linechart', 'datatable'];
+      defaultType = 'columnchart';
+    }
+
+
+    // Dataform schema
+    // ---------------------------------------------------------
+    if (is2xGroupBy) {
+      dataformSchema = {
+        collection: 'result',
+        sort: {
+          index: 'asc',
+          label: 'desc'
+        }
+      };
+      if (isInterval) {
+        dataformSchema.unpack = {
+          index: 'timeframe -> start',
+          label: 'value -> ' + req.queries[0].params.group_by[0],
+          value: 'value -> result'
+        };
+      } else {
+        dataformSchema.unpack = {
+          index: req.queries[0].params.group_by[0],
+          label: req.queries[0].params.group_by[1],
+          value: 'result'
+        };
+      }
+    }
+
+    // Extractions
+    if (isExtraction) {
+      options.capable = ['datatable'];
+      defaultType = 'datatable';
+    }
+
+    // Dataform schema
+    // ---------------------------------------------------------
+    if (isExtraction) {
+      dataformSchema = {
+        collection: "result",
+        select: true
+      };
+      if (req.queries[0].get('property_names')) {
+        dataformSchema.select = [];
+        for (var i = 0; i < req.queries[0].get('property_names').length; i++) {
+          dataformSchema.select.push({ path: req.queries[0].get('property_names')[i] });
+        }
+      }
+    }
+
+
+    // A few last details
     // -------------------------------
-    CS.defaults = CS.defaults || {};
-    CS.defaults.height = 400;
-    CS.defaults.width = 600;
-    CS.defaults.colors = [
+    if (!options.chartType) {
+      options.chartType = defaultType;
+    }
+
+    if (options.chartType == 'metric') {
+      options.library = 'keen-io';
+    }
+
+    if (options.chartOptions.lineWidth == void 0) {
+      options.chartOptions.lineWidth = 2;
+    }
+
+    if (options.chartType == 'piechart') {
+      if (options.chartOptions.sliceVisibilityThreshold == void 0) {
+        options.chartOptions.sliceVisibilityThreshold = 0.01;
+      }
+    }
+
+    if (options.chartType == 'columnchart' || options.chartType == 'areachart' || options.chartType == 'linechart') {
+
+      if (options.chartOptions.hAxis == void 0) {
+        options.chartOptions.hAxis = {
+          baselineColor: 'transparent',
+          gridlines: { color: 'transparent' }
+        };
+      }
+
+      if (options.chartOptions.vAxis == void 0) {
+        options.chartOptions.vAxis = {
+          viewWindow: { min: 0 }
+        };
+      }
+    }
+
+    //_extend(self, options);
+    options['data'] = (data) ? _transform.call(options, data, dataformSchema) : [];
+
+    // Put it all together
+    // -------------------------------
+    if (options.library) {
+      if (Keen.Visualization.libraries[options.library][options.chartType]) {
+        return new Keen.Visualization.libraries[options.library][options.chartType](options);
+      } else {
+        throw new Error('The library you selected does not support this chartType');
+      }
+    } else {
+      throw new Error('The library you selected is not present');
+    }
+
+    return this;
+  };
+
+  // Visual defaults
+  Keen.Visualization.defaults = {
+    library: 'google',
+    height: 400,
+    width: 600,
+    colors: [
       '#00afd7', // blue
       '#49c5b1', // green
       '#e6b449', // gold
       '#f35757'  // red
-    ];
+    ],
+    chartOptions: {}
+  };
 
-    // -------------------------------
-    // Keen IO Data Adapter
-    // -------------------------------
-    CS.addAdapter('default', function(response){
-      var self = this, data;
-      var schema = self.schema || false;
+  // Collect and manage libraries
+  Keen.Visualization.libraries = {};
+  Keen.Visualization.register = function(name, methods){
+    Keen.Visualization.libraries[name] = Keen.Visualization.libraries[name] || {};
+    for (var method in methods) {
+      Keen.Visualization.libraries[name][method] = methods[method];
+    }
+  };
 
-      if (schema) {
-        return new Keen.Dataform(response, schema);
+  Keen.Visualization.visuals = [];
+  var baseVisualization = function(config){
+    var self = this;
+    _extend(self, config);
+
+    // Set default event handlers
+    self.on("error", function(){
+      visualErrorHandler.apply(this, arguments);
+    });
+    self.on("update", function(){
+      self.update.apply(this, arguments);
+    });
+
+    // Let's kick it off!
+    self.initialize();
+    Keen.Visualization.visuals.push(self);
+  };
+
+  baseVisualization.prototype = {
+    initialize: function(){
+      // Set listeners and prepare data
+    },
+    render: function(){
+      // Build artifacts
+    },
+    update: function(){
+      // Handle data updates
+    }
+  };
+  _extend(baseVisualization.prototype, Events);
+
+  Keen.Visualization.extend = function(protoProps, staticProps){
+    var parent = baseVisualization, Visualization;
+    if (protoProps && protoProps.hasOwnProperty('constructor')) {
+      Visualization = protoProps.constructor;
+    } else {
+      Visualization = function(){ return parent.apply(this, arguments); };
+    }
+    _extend(Visualization, parent, staticProps);
+    var Surrogate = function(){ this.constructor = Visualization; };
+    Surrogate.prototype = parent.prototype;
+    Visualization.prototype = new Surrogate();
+    if (protoProps) {
+      _extend(Visualization.prototype, protoProps);
+    }
+    Visualization.__super__ = parent.prototype;
+    return Visualization;
+  };
+
+  function visualErrorHandler(msg){
+
+    var errorPlaceholder = document.createElement("div");
+    errorPlaceholder.className = "keen-error";
+    //errorPlaceholder.style.background = "#f7f7f7";
+    errorPlaceholder.style.borderRadius = "8px";
+    errorPlaceholder.style.height = this.height + "px";
+    errorPlaceholder.style.width = this.width + "px";
+
+    var errorMessage = document.createElement("span");
+    errorMessage.style.color = "#ccc";
+    errorMessage.style.display = "block";
+    errorMessage.style.paddingTop = (this.height / 2 - 15) + "px";
+    errorMessage.style.fontFamily = "Helvetica Neue, Helvetica, Arial, sans-serif";
+    errorMessage.style.fontSize = "21px";
+    errorMessage.style.fontWeight = "light";
+    errorMessage.style.textAlign = "center";
+
+    errorMessage.innerHTML = msg;
+    errorPlaceholder.appendChild(errorMessage);
+
+    this.el.innerHTML = "";
+    this.el.appendChild(errorPlaceholder);
+  }
+
+
+  // -------------------------------
+  // Dataform Configuration
+  // -------------------------------
+  // Handles arbitrary raw data for
+  // scenarios where originating
+  // queries are not known
+  // -------------------------------
+  function _transform(response, config){
+    var self = this, schema = config || {};
+
+    // Metric
+    // -------------------------------
+    if (typeof response.result == "number"){
+      //return new Keen.Dataform(response, {
+      schema = {
+        collection: "",
+        select: [{
+          path: "result",
+          type: "string",
+          label: "Metric",
+          format: false,
+          method: "Keen.utils.prettyNumber",
+          replace: {
+            null: 0
+          }
+        }]
+      }
+    }
+
+    // Everything else
+    // -------------------------------
+    if (response.result instanceof Array && response.result.length > 0){
+
+      // Interval w/ single value
+      // -------------------------------
+      if (response.result[0].timeframe && (typeof response.result[0].value == "number" || response.result[0].value == null)) {
+        schema = {
+          collection: "result",
+          select: [
+            {
+              path: "timeframe -> start",
+              type: "date"
+            },
+            {
+              path: "value",
+              type: "number",
+              format: "10",
+              replace: {
+                null: 0
+              }
+            }
+          ],
+          sort: {
+            column: 0,
+            order: 'asc'
+          }
+        }
       }
 
-      // Metric
+      // Static GroupBy
       // -------------------------------
-      if (typeof response.result == "number"){
-        //return new Keen.Dataform(response, {
+      if (typeof response.result[0].result == "number"){
+        schema = {
+          collection: "result",
+          select: []
+        };
+        for (var key in response.result[0]){
+          if (response.result[0].hasOwnProperty(key) && key !== "result"){
+            schema.select.push({
+              path: key,
+              type: "string"
+            });
+            break;
+          }
+        }
+        schema.select.push({
+          path: "result",
+          type: "number"
+        });
+      }
+
+      // Grouped Interval
+      // -------------------------------
+      if (response.result[0].value instanceof Array){
+        schema = {
+          collection: "result",
+          unpack: {
+            index: {
+              path: "timeframe -> start",
+              type: "date"
+            },
+            value: {
+              path: "value -> result",
+              type: "number",
+              replace: {
+                null: 0
+              }
+            }
+          },
+          sort: {
+            value: "desc"
+          }
+        }
+        for (var key in response.result[0].value[0]){
+          if (response.result[0].value[0].hasOwnProperty(key) && key !== "result"){
+            schema.unpack.label = {
+              path: "value -> " + key,
+              type: "string"
+            }
+            break;
+          }
+        }
+      }
+
+      // Funnel
+      // -------------------------------
+      if (typeof response.result[0] == "number"){
         schema = {
           collection: "",
-          select: [{
-            path: "result",
-            type: "number",
-            label: "Metric",
-            format: false,
-            method: "Keen.utils.prettyNumber",
-            replace: {
-              null: 0
-            }
-          }]
-        }
-      }
-
-      // Everything else
-      // -------------------------------
-      if (response.result instanceof Array && response.result.length > 0){
-
-        // Interval w/ single value
-        // -------------------------------
-        if (response.result[0].timeframe && typeof response.result[0].value == "number") {
-          //return new Keen.Dataform(response, {
-          schema = {
-            collection: "result",
-            select: [
-              {
-                path: "timeframe -> start",
-                type: "date"
-              },
-              {
-                path: "value",
-                type: "number",
-                format: "10",
-                replace: {
-                  null: 0
-                }
-              }
-            ],
-            sort: {
-              column: 0,
-              order: 'asc'
-            }
-          }
-        }
-
-        // Static GroupBy
-        // -------------------------------
-        if (typeof response.result[0].result == "number"){
-          schema = {
-            collection: "result",
-            select: []
-          };
-          for (var key in response.result[0]){
-            if (response.result[0].hasOwnProperty(key) && key !== "result"){
-              schema.select.push({
-                path: key,
-                type: "string"
-              });
-              break;
-            }
-          }
-          schema.select.push({
-            path: "result",
-            type: "number"
-          });
-          /*return new Keen.Dataform(response, {
-            collection: "result",
-            select: true
-          });*/
-        }
-
-        // Grouped Interval
-        // -------------------------------
-        if (response.result[0].value instanceof Array){
-          schema = {
-            collection: "result",
-            unpack: {
-              index: {
-                path: "timeframe -> start",
-                type: "date"
-              },
-              value: {
-                path: "value -> result",
-                type: "number",
-                replace: {
-                  null: 0
-                }
-              }
+          unpack: {
+            index: {
+              path: "steps -> event_collection",
+              type: "string"
             },
-            sort: {
-              value: "desc"
+            value: {
+              path: "result -> ",
+              type: "number"
             }
           }
-          for (var key in response.result[0].value[0]){
-            if (response.result[0].value[0].hasOwnProperty(key) && key !== "result"){
-              schema.unpack.label = {
-                path: "value -> " + key,
-                type: "string"
-              }
-              break;
-            }
-          }
-          //console.log("Grouped Interval", output);
-          //console.log(new Keen.Dataform(response, output));
-          //return new Keen.Dataform(response, output);
-        }
-
-        // Funnel
-        // -------------------------------
-        if (typeof response.result[0] == "number"){
-          schema = {
-            collection: "",
-            unpack: {
-              index: {
-                path: "steps -> event_collection",
-                type: "string"
-              },
-              value: {
-                path: "result -> ",
-                type: "number"
-              }
-            }
-          }
-        }
-
-      }
-
-      if (!schema) {
-        schema = {
-          collection: "result",
-          select: true
         }
       }
 
-      return new Keen.Dataform(response, schema);
-    });
+    }
 
 
+    // Apply formatting options
     // -------------------------------
-    // Keen.Visualization
-    // -------------------------------
-    Keen.Visualization = function(req, selector, config){
-      var self = this, options = (config || {});
-      var library = CS.libraries[options.library] || CS.library, recommended;
-      var isMetric = isFunnel = isInterval = isGroupBy = is2xGroupBy = isExtraction = false;
-      var datasetConfig = {};
-      var viewConfig = {
-        el: selector,
-        chartOptions: {}
+    if (self.labelMapping && schema.unpack) {
+      if (schema.unpack['index']) {
+        schema.unpack['index'].replace = schema.unpack['index'].replace || self.labelMapping;
+      }
+      if (schema.unpack['label']) {
+        schema.unpack['label'].replace = schema.unpack['label'].replace || self.labelMapping;
+      }
+    }
+
+    if (self.labelMapping && schema.select) {
+      _each(schema.select, function(v, i){
+        schema.select[i].replace = self.labelMapping;
+      });
+    }
+
+    return new Keen.Dataform(response, schema);
+  }
+
+  function _pretty_number(_input) {
+    // If it has 3 or fewer sig figs already, just return the number.
+    var input = Number(_input),
+        sciNo = input.toPrecision(3),
+        prefix = "",
+        suffixes = ["", "k", "M", "B", "T"];
+
+    if (Number(sciNo) == input && String(input).length <= 4) {
+      return String(input);
+    }
+
+    if(input >= 1 || input <= -1) {
+      if(input < 0){
+        //Pull off the negative side and stash that.
+        input = -input;
+        prefix = "-";
+      }
+      return prefix + recurse(input, 0);
+    } else {
+      return input.toPrecision(3);
+    }
+
+    function recurse(input, iteration) {
+      var input = String(input);
+      var split = input.split(".");
+      // If there's a dot
+      if(split.length > 1) {
+        // Keep the left hand side only
+        input = split[0];
+        var rhs = split[1];
+        // If the left-hand side is too short, pad until it has 3 digits
+        if (input.length == 2 && rhs.length > 0) {
+          // Pad with right-hand side if possible
+          if (rhs.length > 0) {
+            input = input + "." + rhs.charAt(0);
+          }
+          // Pad with zeroes if you must
+          else {
+            input += "0";
+          }
+        }
+        else if (input.length == 1 && rhs.length > 0) {
+          input = input + "." + rhs.charAt(0);
+          // Pad with right-hand side if possible
+          if(rhs.length > 1) {
+            input += rhs.charAt(1);
+          }
+          // Pad with zeroes if you must
+          else {
+            input += "0";
+          }
+        }
+      }
+      var numNumerals = input.length;
+      // if it has a period, then numNumerals is 1 smaller than the string length:
+      if (input.split(".").length > 1) {
+        numNumerals--;
+      }
+      if(numNumerals <= 3) {
+        return String(input) + suffixes[iteration];
+      }
+      else {
+        return recurse(Number(input) / 1000, iteration + 1);
+      }
+    }
+  }
+
+  function _load_script(url, cb) {
+    var doc = document;
+    var handler;
+    var head = doc.head || doc.getElementsByTagName("head");
+
+    // loading code borrowed directly from LABjs itself
+    setTimeout(function () {
+      // check if ref is still a live node list
+      if ('item' in head) {
+        // append_to node not yet ready
+        if (!head[0]) {
+          setTimeout(arguments.callee, 25);
+          return;
+        }
+        // reassign from live node list ref to pure node ref -- avoids nasty IE bug where changes to DOM invalidate live node lists
+        head = head[0];
+      }
+      var script = doc.createElement("script"),
+      scriptdone = false;
+      script.onload = script.onreadystatechange = function () {
+        if ((script.readyState && script.readyState !== "complete" && script.readyState !== "loaded") || scriptdone) {
+          return false;
+        }
+        script.onload = script.onreadystatechange = null;
+        scriptdone = true;
+        cb();
       };
-      viewConfig.chartOptions.colors = viewConfig.chartOptions.colors || CS.defaults.colors;
+      script.src = url;
+      head.insertBefore(script, head.firstChild);
+    }, 0);
 
-      if (req instanceof Keen.Request) {
+    // required: shim for FF <= 3.5 not having document.readyState
+    if (doc.readyState === null && doc.addEventListener) {
+      doc.readyState = "loading";
+      doc.addEventListener("DOMContentLoaded", handler = function () {
+        doc.removeEventListener("DOMContentLoaded", handler, false);
+        doc.readyState = "complete";
+      }, false);
+    }
+  }
 
-        req.on("complete", function(){
-          if (this.visual) {
-            this.visual.dataset.responses[0] = (this.data instanceof Array) ? this.data[0] : this.data;
-            this.visual.dataset.transform();
+
+  Keen.Visualization.find = function(target){
+    var el, match;
+    if (target) {
+      el = target.nodeName ? target : document.querySelector(target);
+      _each(Keen.Visualization.visuals, function(visual){
+        if (el == visual.el){
+          match = visual;
+          return false;
+        }
+      });
+      if (match) {
+        return match;
+      }
+      throw("Visualization not found");
+    } else {
+      return Keen.Visualization.visuals;
+    }
+  };
+
+  // Expose utils
+  _extend(Keen.utils, {
+    prettyNumber: _pretty_number,
+    loadScript: _load_script
+  });
+
+  // Set flag for script loading
+  Keen.loaded = false;
+
+  // Source: src/async.js
+  /*!
+  * ----------------------
+  * Keen IO Plugin
+  * Async Loader
+  * ----------------------
+  */
+
+  var loaded = window['Keen'],
+      cached = window['_' + 'Keen'] || {},
+      clients,
+      ready;
+
+  if (loaded && cached) {
+    clients = cached['clients'] || {},
+    ready = cached['ready'] || [];
+
+    for (var instance in clients) {
+      if (clients.hasOwnProperty(instance)) {
+        var client = clients[instance];
+
+        // Map methods to existing instances
+        for (var method in Keen.prototype) {
+          if (Keen.prototype.hasOwnProperty(method)) {
+            loaded.prototype[method] = Keen.prototype[method];
+          }
+        }
+
+        // Map additional methods as necessary
+        loaded.Query = (Keen.Query) ? Keen.Query : function(){};
+        loaded.Visualization = (Keen.Visualization) ? Keen.Visualization : function(){};
+
+        // Run Configuration
+        if (client._config) {
+          client.configure.call(client, client._config);
+          delete client._config;
+        }
+
+        // Add Global Properties
+        if (client._setGlobalProperties) {
+          var globals = client._setGlobalProperties;
+          for (var i = 0; i < globals.length; i++) {
+            client.setGlobalProperties.apply(client, globals[i]);
+          }
+          delete client._setGlobalProperties;
+        }
+
+        // Send Queued Events
+        if (client._addEvent) {
+          var queue = client._addEvent || [];
+          for (var i = 0; i < queue.length; i++) {
+            client.addEvent.apply(client, queue[i]);
+          }
+          delete client._addEvent;
+        }
+
+        // Create "on" Events
+        var callback = client._on || [];
+        if (client._on) {
+          for (var i = 0; i < callback.length; i++) {
+            client.on.apply(client, callback[i]);
+          }
+          client.trigger('ready');
+          delete client._on;
+        }
+
+      }
+    }
+
+    for (var i = 0; i < ready.length; i++) {
+      var callback = ready[i];
+      Keen.on('ready', function(){
+        callback();
+      });
+    };
+  }
+
+  // Source: src/_outro.js
+
+  // ----------------------
+  // Utility Methods
+  // ----------------------
+
+  if (Keen.loaded) {
+    setTimeout(function(){
+      Keen.utils.domready(function(){
+        Keen.trigger('ready');
+      });
+    }, 0);
+  }
+
+  return Keen;
+});
+
+  // Source: src/plugins/keen-googlecharts.js
+/*!
+* ----------------------
+* Keen IO Plugin
+* Data Visualization
+* ----------------------
+*/
+
+!function(name, context){
+  var Keen = context[name] || {},
+      AreaChart,
+      BarChart,
+      ColumnChart,
+      LineChart,
+      PieChart,
+      Table;
+
+  var errors = {
+    "google-visualization-errors-0": "No results to visualize"
+  }
+
+  Keen.utils.loadScript("https://www.google.com/jsapi", function() {
+    if(typeof google === 'undefined'){
+      throw new Error("Problem loading Google Charts library. Please contact us!");
+    } else {
+      google.load('visualization', '1.0', {
+          packages: ['corechart', 'table'],
+          callback: function(){
+            Keen.loaded = true;
+            Keen.trigger('ready');
+          }
+      });
+    }
+  });
+
+  function setColors(){
+    var self = this;
+    if (self.colorMapping) {
+      if (self.data.table[0].length > 2) {
+        // map to labels
+        Keen.utils.each(self.data.table[0], function(cell, i){
+          if (i > 0 && self.colorMapping[cell]) {
+            self.colors.splice(i-1, 0, self.colorMapping[cell]);
           }
         });
-
-        isMetric = (typeof req.data.result == "number" || req.data.result == null) ? true : false,
-        isFunnel = (req.queries[0].get('steps')) ? true : false,
-        isInterval = (req.queries[0].get('interval')) ? true : false,
-        isGroupBy = (req.queries[0].get('group_by')) ? true : false,
-        is2xGroupBy = (req.queries[0].get('group_by') instanceof Array) ? true : false;
-        isExtraction = (req.queries[0].analysis == 'extraction') ? true : false;
-
-        if (req.instance.client) {
-          datasetConfig = {
-            //adapter: "keen-io",
-            //url: req.instance.client.endpoint + '/projects/' + req.instance.client.projectId + req.queries[0].path,
-            //params: req.queries[0].params,
-            dateformat: options.dateFormat || ""
-          };
-          //datasetConfig.params.api_key = req.instance.client.readKey;
-        }
-
-        if (req.data !== void 0) {
-          datasetConfig.response = (req.data instanceof Array) ? req.data[0] : req.data;
-        }
-
-        viewConfig.title = (function(){
-          var analysis = req.queries[0].analysis.replace("_", " "),
-              collection = req.queries[0].get('event_collection'),
-              output;
-
-          output = analysis.replace( /\b./g, function(a){
-            return a.toUpperCase();
-          });
-
-          if (collection) {
-            output += ' - ' + collection;
-          }
-          return output;
-        })();
-
-      } else if (typeof req === "string") {
-        datasetConfig.url = req;
       } else {
-        datasetConfig.response = (req instanceof Array) ? req[0] : req;
-      }
-
-
-      // -------------------------------
-      // Select a default chart type
-      // -------------------------------
-
-      // Metric
-      if (isMetric) {
-        options.capable = ['metric'];
-        recommended = 'metric';
-      }
-
-      // GroupBy
-      if (!isInterval && isGroupBy) {
-        options.capable = ['piechart', 'barchart', 'columnchart', 'datatable'];
-        recommended = 'piechart';
-      }
-
-      // Single Interval
-      if (isInterval) { // Series
-        options.capable = ['areachart', 'barchart', 'columnchart', 'linechart', 'datatable'];
-        recommended = 'areachart';
-        if (!isGroupBy && library == 'google') {
-          viewConfig.chartOptions.legend = { position: 'none' };
-        }
-      }
-
-      // GroupBy Interval
-      if (isInterval && isGroupBy) {}
-
-      // Custom Dataset schema for
-      // complex query/response types
-      // -------------------------------
-
-      // ---------------------------------------------------------
-      // Funnels
-      // ---------------------------------------------------------
-      if (isFunnel) {
-        options.capable = ['areachart', 'barchart', 'columnchart', 'linechart', 'datatable'];
-        recommended = 'columnchart';
-        if (library == 'google') {
-          viewConfig.chartOptions.legend = { position: 'none' };
-        }
-      }
-
-      // ---------------------------------------------------------
-      // 2x GroupBy
-      // ---------------------------------------------------------
-      if (is2xGroupBy) {
-        options.capable = ['areachart', 'barchart', 'columnchart', 'linechart', 'datatable'];
-        recommended = 'columnchart';
-      }
-
-      // Dataform schema
-      if (is2xGroupBy) {
-        datasetConfig.schema = {
-          collection: 'result',
-          sort: {
-            index: 'asc',
-            label: 'desc'
+        // map to indices
+        Keen.utils.each(self.data.table, function(row, i){
+          if (i > 0 && self.colorMapping[row[0]]) {
+            self.colors.splice(i-1, 0, self.colorMapping[row[0]]);
           }
-        };
-        if (isInterval) {
-          datasetConfig.schema.unpack = {
-            index: 'timeframe -> start',
-            label: 'value -> ' + req.queries[0].params.group_by[0],
-            value: 'value -> result'
-          };
-        } else {
-          datasetConfig.schema.unpack = {
-            index: req.queries[0].params.group_by[0],
-            label: req.queries[0].params.group_by[1],
-            value: 'result'
-          };
-        }
+        });
       }
+    }
+    return self.colors;
+  }
 
-      // ---------------------------------------------------------
-      // Extractions
-      // ---------------------------------------------------------
-      if (isExtraction) {
-        options.capable = ['datatable'];
-        recommended = 'datatable';
+  function handleErrors(stack){
+    var message = errors[stack['id']] || stack['message'] || "An error occurred";
+    this.trigger('error', message);
+  }
+
+
+  // Create chart types
+  // -------------------------------
+
+  AreaChart = Keen.Visualization.extend({
+    initialize: function(){
+      this.render();
+    },
+    render: function(){
+      var self = this;
+      self._chart = self._chart || new google.visualization.AreaChart(self.el);
+      google.visualization.events.addListener(self._chart, 'error', function(stack){
+        handleErrors.call(self, stack);
+      });
+      this.update();
+    },
+    update: function(){
+      var data = google.visualization.arrayToDataTable(this.data.table);
+      var options = Keen.utils.extend(this.chartOptions, {
+        title: this.title || '',
+        height: parseInt(this.height),
+        width: parseInt(this.width),
+        colors: setColors.call(this)
+      });
+      this._chart.draw(data, options);
+    }
+  });
+
+  BarChart = Keen.Visualization.extend({
+    initialize: function(){
+      this.render();
+    },
+    render: function(){
+      var self = this;
+      self._chart = self._chart || new google.visualization.BarChart(self.el);
+      google.visualization.events.addListener(self._chart, 'error', function(stack){
+        handleErrors.call(self, stack);
+      });
+      self.update();
+    },
+    update: function(){
+      var data = google.visualization.arrayToDataTable(this.data.table);
+      var options = Keen.utils.extend(this.chartOptions, {
+        title: this.title || '',
+        height: parseInt(this.height),
+        width: parseInt(this.width),
+        colors: setColors.call(this)
+      });
+      this._chart.draw(data, options);
+    }
+  });
+
+  ColumnChart = Keen.Visualization.extend({
+    initialize: function(){
+      this.render();
+    },
+    render: function(){
+      var self = this;
+      self._chart = self._chart || new google.visualization.ColumnChart(self.el);
+      google.visualization.events.addListener(self._chart, 'error', function(stack){
+        handleErrors.call(self, stack);
+      });
+      self.update();
+    },
+    update: function(){
+      var data = google.visualization.arrayToDataTable(this.data.table);
+      var options = Keen.utils.extend(this.chartOptions, {
+        title: this.title || '',
+        height: parseInt(this.height),
+        width: parseInt(this.width),
+        colors: setColors.call(this)
+      });
+      this._chart.draw(data, options);
+    }
+  });
+
+  LineChart = Keen.Visualization.extend({
+    initialize: function(){
+      this.render();
+    },
+    render: function(){
+      var self = this;
+      self._chart = self._chart || new google.visualization.LineChart(self.el);
+      google.visualization.events.addListener(self._chart, 'error', function(stack){
+        handleErrors.call(self, stack);
+      });
+      self.update();
+    },
+    update: function(){
+      var data = google.visualization.arrayToDataTable(this.data.table);
+      var options = Keen.utils.extend(this.chartOptions, {
+        title: this.title || '',
+        height: parseInt(this.height),
+        width: parseInt(this.width),
+        colors: setColors.call(this)
+      });
+      this._chart.draw(data, options);
+    }
+  });
+
+  PieChart = Keen.Visualization.extend({
+    initialize: function(){
+      this.render();
+    },
+    render: function(){
+      var self = this;
+      self._chart = self._chart || new google.visualization.PieChart(self.el);
+      google.visualization.events.addListener(self._chart, 'error', function(stack){
+        handleErrors.call(self, stack);
+      });
+      self.update();
+    },
+    update: function(){
+      var data = google.visualization.arrayToDataTable(this.data.table);
+      var options = Keen.utils.extend(this.chartOptions, {
+        title: this.title || '',
+        height: parseInt(this.height),
+        width: parseInt(this.width),
+        colors: setColors.call(this)
+      });
+      this._chart.draw(data, options);
+    }
+  });
+
+  Table = Keen.Visualization.extend({
+    initialize: function(){
+      this.render();
+    },
+    render: function(){
+      var self = this;
+      self._chart = self._chart || new google.visualization.Table(self.el);
+      google.visualization.events.addListener(self._chart, 'error', function(stack){
+        handleErrors.call(self, stack);
+      });
+      self.update();
+    },
+    update: function(){
+      var data = google.visualization.arrayToDataTable(this.data.table);
+      var options = Keen.utils.extend(this.chartOptions, {
+        title: this.title || '',
+        height: parseInt(this.height),
+        width: parseInt(this.width),
+        colors: setColors.call(this)
+      });
+      this._chart.draw(data, options);
+    }
+  });
+
+
+  // Register library + types
+  // -------------------------------
+
+  Keen.Visualization.register('google', {
+    'areachart': AreaChart,
+    'barchart': BarChart,
+    'columnchart': ColumnChart,
+    'linechart': LineChart,
+    'piechart': PieChart,
+    'datatable': Table
+  });
+
+}('Keen', this);
+
+  // Source: src/plugins/keen-widgets.js
+/*!
+* ----------------------
+* Keen IO Plugin
+* Data Visualization
+* ----------------------
+*/
+
+!function(name, context){
+  var Keen = context[name] || {},
+      Metric;
+
+  Metric = Keen.Visualization.extend({
+    initialize: function(){
+      var css = document.createElement("style"),
+          bgColor = (this.colors.length > 1) ? this.colors[1] : this.colors[0];
+
+      css.id = "keen-widgets";
+      css.type = "text/css";
+      css.innerHTML = "\
+.keen-metric { \n  background: " + bgColor + "; \n  border-radius: 4px; \n  color: #fff; \n  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; \n  padding: 10px 0; \n  text-align: center; \n} \
+.keen-metric-value { \n  display: block; \n  font-size: 84px; \n  font-weight: 700; \n  line-height: 84px; \n} \
+.keen-metric-title { \n  display: block; \n  font-size: 24px; \n  font-weight: 200; \n}";
+      if (!document.getElementById("cs-styles-keen-io")) {
+        document.body.appendChild(css);
       }
+      this.render();
+    },
+    render: function(){
+      this.el.innerHTML = '' +
+        '<div class="keen-widget keen-metric" style="width:' + parseInt(this.width) + 'px;">' +
+        '<span class="keen-metric-value">' + this.data.table[1] + '</span>' +
+        '<span class="keen-metric-title">' + (this.title || 'Result') + '</span>' +
+        '</div>';
+    }
+  });
 
-      // Dataform schema
-      if (isExtraction) {
-        datasetConfig.schema = {
-          collection: "result",
-          select: true
-        };
-        if (req.queries[0].get('property_names')) {
-          datasetConfig.schema.select = [];
-          for (var i = 0; i < req.queries[0].get('property_names').length; i++) {
-            datasetConfig.schema.select.push({ path: req.queries[0].get('property_names')[i] });
-          }
-        }
-      }
+  Keen.Visualization.register('keen-io', {
+    'metric': Metric
+  });
 
-
-      // -------------------------------
-      // Configure View
-      // -------------------------------
-      //viewConfig = CS.extend(viewConfig, options);
-      CS.extend(viewConfig.chartOptions, options.chartOptions);
-      viewConfig.height = options.height || CS.defaults.height;
-      viewConfig.width = options.width || CS.defaults.width;
-
-      if (options.title !== void 0) {
-        viewConfig.title = options.title;
-      }
-
-      options.chartType = options.chartType || recommended;
-      if (options.chartType == 'metric') {
-        library = 'keen-io';
-      }
-
-      // Put it all together
-      // -------------------------------
-      if (library) {
-        if (CS.libraries[library][options.chartType]) {
-          return new CS.Chart({
-            dataset: new CS.Dataset(datasetConfig),
-            view: new CS.libraries[library][options.chartType](viewConfig)
-          });
-        } else {
-          //console.log(library, options.chartType);
-          throw new Error('The visualization type you requested is not available for this library');
-        }
-      } else {
-        //console.log(library);
-        throw new Error('The visualization library you requested is not present');
-      }
-
-      return this;
-    };
-
-    Keen.utils.prettyNumber = function(input) {
-      // If it has 3 or fewer sig figs already, just return the number.
-      var sciNo = input.toPrecision(3),
-          prefix = "",
-          suffixes = ["", "k", "M", "B", "T"];
-      if (Number(sciNo) == input && String(input).length <= 4) {
-        return String(input);
-      }
-      if(input >= 1 || input <= -1) {
-        if(input < 0){
-            //Pull off the negative side and stash that.
-            input = -input;
-            prefix = "-";
-        }
-        function recurse(input, iteration) {
-          var input = String(input);
-          split = input.split(".");
-          // If there's a dot
-          if(split.length > 1) {
-            // Keep the left hand side only
-            input = split[0];
-            var rhs = split[1];
-            // If the left-hand side is too short, pad until it has 3 digits
-            if (input.length == 2 && rhs.length > 0) {
-              // Pad with right-hand side if possible
-              if (rhs.length > 0) {
-                input = input + "." + rhs.charAt(0);
-              }
-              // Pad with zeroes if you must
-              else {
-                input += "0";
-              }
-            }
-            else if (input.length == 1 && rhs.length > 0) {
-              input = input + "." + rhs.charAt(0);
-              // Pad with right-hand side if possible
-              if(rhs.length > 1) {
-                input += rhs.charAt(1);
-              }
-              // Pad with zeroes if you must
-              else {
-                input += "0";
-              }
-            }
-          }
-          var numNumerals = input.length;
-          // if it has a period, then numNumerals is 1 smaller than the string length:
-          if (input.split(".").length > 1) {
-            numNumerals--;
-          }
-          if(numNumerals <= 3) {
-            return String(input) + suffixes[iteration];
-          }
-          else {
-            return recurse(Number(input) / 1000, iteration + 1);
-          }
-        }
-        return prefix + recurse(input, 0);
-      } else {
-        return input.toPrecision(3);
-      }
-    };
-
-    CS.ready(function(){
-      Keen.trigger('ready');
-    });
-
-  }('Keen', this);
+}('Keen', this);
