@@ -5,6 +5,7 @@ module.exports = function(grunt) {
 
   grunt.loadNpmTasks("grunt-contrib-connect");
   grunt.loadNpmTasks("grunt-contrib-concat");
+  grunt.loadNpmTasks('grunt-contrib-copy');
   grunt.loadNpmTasks("grunt-contrib-uglify");
   grunt.loadNpmTasks("grunt-contrib-watch");
   grunt.loadNpmTasks('grunt-s3');
@@ -13,6 +14,18 @@ module.exports = function(grunt) {
 
   grunt.initConfig({
     pkg: grunt.file.readJSON("package.json"),
+
+    copy: {
+      build: {
+        src: "bower_components/dataform/dist/dataform.js",
+        dest: "src/lib/keen-dataform.js",
+        options: {
+          process: function (content, path) {
+            return content.replace("\'Dataform\', this", "\'Dataform\', Keen");
+          }
+        }
+      }
+    },
 
     concat: {
       options: {
@@ -29,13 +42,16 @@ module.exports = function(grunt) {
           "src/core.js",
           "src/track.js",
           "src/query.js",
-          "src/visualize.js",
           "src/lib/base64.js",
           "src/lib/json2.js",
+          "src/lib/keen-dataform.js",
+          "src/lib/keen-domready.js",
+          "src/lib/keen-spinner.js",
+          "src/visualize.js",
           "src/async.js",
           "src/_outro.js",
-          "src/lib/chartstack.js",
-          "src/plugins/keen-chartstack.js"
+          "src/plugins/keen-googlecharts.js",
+          "src/plugins/keen-widgets.js"
         ],
         dest: "dist/<%= pkg.name %>.js"
       },
@@ -46,9 +62,9 @@ module.exports = function(grunt) {
           "src/track.js",
           "src/lib/base64.js",
           "src/lib/json2.js",
+          "src/lib/keen-domready.js",
           "src/async.js",
           "src/_outro.js"
-          //"src/plugins/keen-pageviews.js"
         ],
         dest: "dist/<%= pkg.name %>-tracker.js"
       },
@@ -98,7 +114,10 @@ module.exports = function(grunt) {
           build: process.env.TRAVIS_JOB_ID,
           urls: saucelabs.urls,
           browsers: saucelabs.browsers,
-          concurrency: saucelabs.concurrency
+          concurrency: saucelabs.concurrency,
+          sauceConfig: {
+            'video-upload-on-pass': false
+          }
         }
       }
     },
@@ -111,22 +130,40 @@ module.exports = function(grunt) {
         access: 'public-read',
         headers: {
           // Two Year cache policy (1000 * 60 * 60 * 24 * 1) // temp: 1 day
-          "Cache-Control": "max-age=630720000, public",
-          "Expires": new Date(Date.now() + 63072000000).toUTCString()
+          "Cache-Control": "max-age=86400000, public", // 86400000
+          "Expires": new Date(Date.now() + 86400000).toUTCString()
         },
         gzip: true
       },
-      deploy: {
+      release: {
         upload: [
           {
             src: 'dist/*',
             dest: 'latest/'
+          },
+          {
+            src: 'dist/*',
+            dest: '<%= pkg.version %>/'
           }
-        ],
+        ]/*,
         sync: [
           {
             src: 'dist/*',
             dest: '<%= pkg.version %>/'
+          }
+        ]*/
+      },
+      staging: {
+        upload: [
+          {
+            src: 'dist/*',
+            dest: 'staging/',
+            options: {
+              headers: {
+                "Cache-Control": "max-age=1000, public",
+                "Expires": new Date(Date.now() + 1000).toUTCString()
+              }
+            }
           }
         ]
       }
@@ -134,7 +171,7 @@ module.exports = function(grunt) {
 
   });
 
-  grunt.registerTask('build', ['concat', 'uglify']);
+  grunt.registerTask('build', ['copy', 'concat', 'uglify']);
   grunt.registerTask('dev', ['build', 'connect', 'watch']);
   grunt.registerTask('test', ['build', 'connect', 'saucelabs-mocha']);
   grunt.registerTask('default', ['build']);
