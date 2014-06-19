@@ -69,8 +69,8 @@
   }
 
   function _type(obj){
-	  var text = obj.constructor.toString();
-	  return text.match(/function (.*)\(/)[1];
+    var text = (obj && obj.constructor) ? obj.constructor.toString() : void 0;
+	  return (text) ? text.match(/function (.*)\(/)[1] : "Null";
   }
 
   function _each(o, cb, s){
@@ -97,6 +97,21 @@
       }
     }
     return 1;
+  }
+
+  function _parse_params(str){
+    // via http://stackoverflow.com/a/2880929/2511985
+    var urlParams = {},
+        match,
+        pl     = /\+/g,  // Regex for replacing addition symbol with a space
+        search = /([^&=]+)=?([^&]*)/g,
+        decode = function (s) { return decodeURIComponent(s.replace(pl, " ")); },
+        query  = str.split("?")[1];
+
+    while (!!(match=search.exec(query))) {
+      urlParams[decode(match[1])] = decode(match[2]);
+    }
+    return urlParams;
   }
 
   function _set_protocol(value) {
@@ -286,15 +301,22 @@
   // Expose utils
   Keen.utils = {
     each: _each,
-    extend: _extend
+    extend: _extend,
+    parseParams: _parse_params
   };
 
   Keen.ready = function(callback){
-    Keen.on('ready', callback);
+    if (Keen.loaded) {
+      callback();
+    } else {
+      Keen.on('ready', callback);
+    }
   };
 
   Keen.log = function(message) {
-    console.log('[Keen IO]', message)
+    if (typeof console == "object") {
+      console.log('[Keen IO]', message);
+    }
   };
 
   // -------------------------------
@@ -362,7 +384,6 @@
   };
 
   Keen.prototype.setGlobalProperties = function(newGlobalProperties) {
-    //console.log('setGlobalProperties', arguments);
     if (!this.client) return Keen.log('Check out our JavaScript SDK Usage Guide: https://keen.io/docs/clients/javascript/usage-guide/');
     if (newGlobalProperties && typeof(newGlobalProperties) == "function") {
       this.client.globalProperties = newGlobalProperties;
@@ -420,10 +441,9 @@
   };
 
   // Source: src/lib/base64.js
-  /*! 
+  /*!
   * ----------------------------------------
   * Keen IO Base64 Transcoding
-  * https://gist.github.com/sgammon/5562296
   * ----------------------------------------
   */
 
@@ -748,6 +768,64 @@
       };
     }
   }());
+  // Source: src/lib/keen-domready.js
+/*!
+  * domready (c) Dustin Diaz 2012 - License MIT
+  */
+// Modified header to work internally w/ Keen lib
+!function (name, context, definition) {
+  if (typeof module != 'undefined' && module.exports) module.exports = definition()
+  else if (typeof define == 'function' && define.amd) define(definition)
+  else context[name] = definition()
+}('domready', Keen.utils, function(ready) {
+
+  var fns = [], fn, f = false
+    , doc = document
+    , testEl = doc.documentElement
+    , hack = testEl.doScroll
+    , domContentLoaded = 'DOMContentLoaded'
+    , addEventListener = 'addEventListener'
+    , onreadystatechange = 'onreadystatechange'
+    , readyState = 'readyState'
+    , loadedRgx = hack ? /^loaded|^c/ : /^loaded|c/
+    , loaded = loadedRgx.test(doc[readyState])
+
+  function flush(f) {
+    loaded = 1
+    while (f = fns.shift()) f()
+  }
+
+  doc[addEventListener] && doc[addEventListener](domContentLoaded, fn = function () {
+    doc.removeEventListener(domContentLoaded, fn, f)
+    flush()
+  }, f)
+
+
+  hack && doc.attachEvent(onreadystatechange, fn = function () {
+    if (/^c/.test(doc[readyState])) {
+      doc.detachEvent(onreadystatechange, fn)
+      flush()
+    }
+  })
+
+  return (ready = hack ?
+    function (fn) {
+      self != top ?
+        loaded ? fn() : fns.push(fn) :
+        function () {
+          try {
+            testEl.doScroll('left')
+          } catch (e) {
+            return setTimeout(function() { ready(fn) }, 50)
+          }
+          fn()
+        }()
+    } :
+    function (fn) {
+      loaded ? fn() : fns.push(fn)
+    })
+});
+
   // Source: src/async.js
   /*!
   * ----------------------
@@ -831,11 +909,13 @@
   // Utility Methods
   // ----------------------
 
-  setTimeout(function(){
-    if (Keen.loaded) {
-      Keen.trigger("ready");
-    }
-  }, 0);
+  if (Keen.loaded) {
+    setTimeout(function(){
+      Keen.utils.domready(function(){
+        Keen.trigger('ready');
+      });
+    }, 0);
+  }
 
   return Keen;
 });
