@@ -44,14 +44,9 @@ module.exports = function(grunt) {
           "src/query.js",
           "src/lib/base64.js",
           "src/lib/json2.js",
-          "src/lib/keen-dataform.js",
           "src/lib/keen-domready.js",
-          "src/lib/keen-spinner.js",
-          "src/visualize.js",
           "src/async.js",
-          "src/_outro.js",
-          "src/plugins/keen-googlecharts.js",
-          "src/plugins/keen-widgets.js"
+          "src/_outro.js"
         ],
         dest: "dist/<%= pkg.name %>.js"
       },
